@@ -85,6 +85,7 @@ export class InstallerService {
       version: item.version,
       installed_files: JSON.stringify(installedFiles),
       installed_at: Date.now(),
+      is_dependency: 0,
     })
   }
 

@@ -17,6 +17,7 @@ interface CkanFile {
   recommends?: any[]
   suggests?: any[]
   conflicts?: any[]
+  provides?: string[]
   install: any[]
   download: string
   download_size?: number
@@ -31,9 +32,13 @@ function extractSpaceDockId(url: string | undefined): number | null {
   return match ? parseInt(match[1], 10) : null
 }
 
+function parseVersionParts(v: string): number[] {
+  return v.replace(/^v/i, '').split('.').map(s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n })
+}
+
 function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
+  const pa = parseVersionParts(a)
+  const pb = parseVersionParts(b)
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const va = pa[i] ?? 0
     const vb = pb[i] ?? 0
@@ -42,7 +47,9 @@ function compareVersions(a: string, b: string): number {
   return 0
 }
 
-const { dbPath, repoPath } = workerData as { dbPath: string; repoPath: string }
+const workerInput = workerData as { dbPath: string; repoPaths?: string[]; repoPath?: string }
+const { dbPath } = workerInput
+const repoPaths: string[] = workerInput.repoPaths ?? (workerInput.repoPath ? [workerInput.repoPath] : [])
 
 const db = new Database(dbPath)
 db.pragma('journal_mode = WAL')
@@ -66,29 +73,39 @@ const upsertMod = db.prepare(`
 const upsertVersion = db.prepare(`
   INSERT INTO mod_versions (identifier, version, ksp_version, ksp_version_min,
     ksp_version_max, download_url, download_hash, download_size, depends,
-    recommends, suggests, conflicts, install_directives)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    recommends, suggests, conflicts, provides, install_directives)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(identifier, version) DO UPDATE SET
     ksp_version=excluded.ksp_version, ksp_version_min=excluded.ksp_version_min,
     ksp_version_max=excluded.ksp_version_max, download_url=excluded.download_url,
     download_hash=excluded.download_hash, download_size=excluded.download_size,
     depends=excluded.depends, recommends=excluded.recommends,
     suggests=excluded.suggests, conflicts=excluded.conflicts,
-    install_directives=excluded.install_directives
+    provides=excluded.provides, install_directives=excluded.install_directives
 `)
 
 try {
-  const entries = fs.readdirSync(repoPath, { withFileTypes: true })
-  const modDirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'))
-  const total = modDirs.length
+  // Collect all mod directories from all repos (deduplicate by mod name per repo)
+  const allModDirs: Array<{ repoPath: string; name: string }> = []
+  for (const repoPath of repoPaths) {
+    try {
+      const entries = fs.readdirSync(repoPath, { withFileTypes: true })
+      const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      parentPort?.postMessage({ type: 'log', message: `[index-worker] scanning ${repoPath} → ${dirs.length} mod dirs` })
+      dirs.forEach(e => allModDirs.push({ repoPath, name: e.name }))
+    } catch (err: any) {
+      parentPort?.postMessage({ type: 'log', message: `[index-worker] failed to read ${repoPath}: ${err.message}` })
+    }
+  }
+  const total = allModDirs.length
 
   const BATCH = 500
-  for (let i = 0; i < modDirs.length; i += BATCH) {
-    const batch = modDirs.slice(i, i + BATCH)
+  for (let i = 0; i < allModDirs.length; i += BATCH) {
+    const batch = allModDirs.slice(i, i + BATCH)
 
     const insertBatch = db.transaction(() => {
       for (const dir of batch) {
-        const modPath = path.join(repoPath, dir.name)
+        const modPath = path.join(dir.repoPath, dir.name)
         let files: string[]
         try { files = fs.readdirSync(modPath).filter(f => f.endsWith('.ckan')) }
         catch { continue }
@@ -142,6 +159,7 @@ try {
               c.recommends ? JSON.stringify(c.recommends) : null,
               c.suggests ? JSON.stringify(c.suggests) : null,
               c.conflicts ? JSON.stringify(c.conflicts) : null,
+              c.provides ? JSON.stringify(c.provides) : null,
               JSON.stringify(c.install ?? [])
             )
           } catch (err: any) {
@@ -152,7 +170,7 @@ try {
     })
     insertBatch()
 
-    parentPort?.postMessage({ type: 'progress', current: Math.min(i + BATCH, total), total })
+    parentPort?.postMessage({ type: 'progress', current: Math.min(i + BATCH, total), total: allModDirs.length })
   }
 
   db.close()

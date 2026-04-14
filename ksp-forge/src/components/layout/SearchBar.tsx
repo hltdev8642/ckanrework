@@ -1,13 +1,36 @@
 import { useEffect, useRef, useState } from 'react'
-import { useUiStore } from '../../stores/ui-store'
+import { useUiStore, type AdvancedFilters } from '../../stores/ui-store'
 import { useModStore } from '../../stores/mod-store'
+
+/** Parse `author:Foo tag:Bar license:MIT installed:yes compat:1.12 rest of query`
+ *  Returns { filters, plainQuery } */
+function parseQueryTokens(raw: string): { filters: Partial<AdvancedFilters>; plainQuery: string } {
+  const tokens = raw.trim().split(/\s+/)
+  const filters: Partial<AdvancedFilters> = {}
+  const plain: string[] = []
+
+  for (const token of tokens) {
+    const m = token.match(/^(author|tag|license|installed|compat):(.+)$/i)
+    if (m) {
+      const key = m[1].toLowerCase() as keyof AdvancedFilters
+      const val = m[2]
+      if (key === 'installed') filters.installed = (val === 'yes' ? 'yes' : val === 'no' ? 'no' : '')
+      else (filters as any)[key] = val
+    } else {
+      plain.push(token)
+    }
+  }
+
+  return { filters, plainQuery: plain.join(' ') }
+}
 
 export function SearchBar() {
   const {
     searchQuery, sortBy, filterKspVersionMin, filterKspVersionMax,
     filterCompatibleOnly, setSearchQuery, setSortBy,
     setFilterKspVersionMin, setFilterKspVersionMax,
-    setFilterCompatibleOnly, resetFilters,
+    setFilterCompatibleOnly, resetFilters, advancedFilters,
+    setAdvancedFilters, clearAdvancedFilters,
   } = useUiStore()
   const { searchMods, fetchMods, kspVersions } = useModStore()
 
@@ -19,18 +42,35 @@ export function SearchBar() {
 
   const handleChange = (value: string) => {
     setLocalQuery(value)
+    // Parse advanced tokens out of query
+    const { filters, plainQuery } = parseQueryTokens(value)
+    setAdvancedFilters(filters)
+    // Clear tokens not present in new value
+    if (!value.match(/author:/i)) setAdvancedFilters({ author: '' })
+    if (!value.match(/tag:/i)) setAdvancedFilters({ tag: '' })
+    if (!value.match(/license:/i)) setAdvancedFilters({ license: '' })
+    if (!value.match(/installed:/i)) setAdvancedFilters({ installed: '' })
+    if (!value.match(/compat:/i)) setAdvancedFilters({ compat: '' })
     setSearchQuery(value)
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      if (value.trim()) searchMods(value.trim())
+      if (plainQuery.trim()) searchMods(plainQuery.trim())
       else fetchMods()
     }, 300)
   }
 
+  const advancedFilterCount =
+    (advancedFilters.author ? 1 : 0) +
+    (advancedFilters.tag ? 1 : 0) +
+    (advancedFilters.license ? 1 : 0) +
+    (advancedFilters.installed ? 1 : 0) +
+    (advancedFilters.compat ? 1 : 0)
+
   const activeFilterCount =
     (filterKspVersionMin ? 1 : 0) +
     (filterKspVersionMax ? 1 : 0) +
-    (filterCompatibleOnly ? 1 : 0)
+    (filterCompatibleOnly ? 1 : 0) +
+    advancedFilterCount
 
   return (
     <div className="border-b border-space-border bg-space-surface/50">
@@ -44,7 +84,7 @@ export function SearchBar() {
             type="text"
             value={localQuery}
             onChange={(e) => handleChange(e.target.value)}
-            placeholder="Search mods..."
+            placeholder="Search mods... (author:name tag:parts license:MIT installed:yes compat:1.12)"
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-space-bg border border-space-border text-space-text placeholder:text-space-text-muted text-sm focus:outline-none focus:border-space-accent/50 transition-colors"
           />
         </div>
@@ -114,7 +154,7 @@ export function SearchBar() {
 
           {activeFilterCount > 0 && (
             <button
-              onClick={resetFilters}
+              onClick={() => { resetFilters(); clearAdvancedFilters() }}
               className="text-xs text-[#ef4444] hover:text-[#f87171] transition-colors cursor-pointer ml-auto"
             >
               Reset

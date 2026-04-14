@@ -4,6 +4,8 @@ import { useUiStore } from '../../stores/ui-store'
 import { api } from '../../lib/ipc'
 import { formatDate } from '../../lib/format'
 
+interface RepoRow { id: string; name: string; url: string; enabled: number; priority: number }
+
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB']
@@ -19,10 +21,20 @@ export function SettingsView() {
   const [syncing, setSyncing] = useState(false)
   const [cacheSize, setCacheSize] = useState<number | null>(null)
   const [clearingCache, setClearingCache] = useState(false)
+  const [repos, setRepos] = useState<RepoRow[]>([])
+  const [newRepoName, setNewRepoName] = useState('')
+  const [newRepoUrl, setNewRepoUrl] = useState('')
+  const [addingRepo, setAddingRepo] = useState(false)
+
+  const loadRepos = async () => {
+    const r = await api.repos.getAll()
+    setRepos(r ?? [])
+  }
 
   useEffect(() => {
     api.meta.getLastSync().then((ts: number | null) => setLastSync(ts))
     api.modCache.getSize().then((size: number) => setCacheSize(size))
+    loadRepos()
   }, [])
 
   const handleClearCache = async () => {
@@ -44,6 +56,27 @@ export function SettingsView() {
     } finally {
       setSyncing(false)
     }
+  }
+
+  const handleAddRepo = async () => {
+    if (!newRepoName.trim() || !newRepoUrl.trim()) return
+    const id = `repo-${Date.now()}`
+    await api.repos.add({ id, name: newRepoName.trim(), url: newRepoUrl.trim(), enabled: 1, priority: repos.length })
+    setNewRepoName('')
+    setNewRepoUrl('')
+    setAddingRepo(false)
+    await loadRepos()
+  }
+
+  const handleToggleRepo = async (repo: RepoRow) => {
+    await api.repos.update({ ...repo, enabled: repo.enabled ? 0 : 1 })
+    await loadRepos()
+  }
+
+  const handleRemoveRepo = async (id: string) => {
+    if (!confirm('Remove this repository? It will no longer be included in future syncs.')) return
+    await api.repos.remove(id)
+    await loadRepos()
   }
 
   return (
@@ -122,6 +155,80 @@ export function SettingsView() {
                 )}
               </button>
             </div>
+          </div>
+        </section>
+
+        {/* CKAN Repositories section */}
+        <section className="flex flex-col gap-4">
+          <div className="flex items-center gap-2 pb-2 border-b border-[rgba(99,102,241,0.12)]">
+            <span className="text-base">🗂</span>
+            <h3 className="text-base font-semibold text-white">CKAN Repositories</h3>
+          </div>
+
+          <div className="rounded-xl bg-[rgba(255,255,255,0.03)] border border-[rgba(99,102,241,0.12)] p-5 flex flex-col gap-3">
+            {repos.length === 0 && (
+              <p className="text-xs text-[rgba(148,163,184,0.5)]">No repositories configured. The official CKAN repo is used by default.</p>
+            )}
+            {repos.map(repo => (
+              <div key={repo.id} className="flex items-center gap-3 py-2 border-b border-[rgba(99,102,241,0.06)] last:border-0">
+                <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
+                  <input type="checkbox" checked={!!repo.enabled} onChange={() => handleToggleRepo(repo)} className="accent-[#6366f1] w-3.5 h-3.5" />
+                </label>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-white truncate">{repo.name}</p>
+                  <p className="text-xs text-[rgba(148,163,184,0.5)] truncate">{repo.url}</p>
+                </div>
+                {repo.id !== 'official' && (
+                  <button
+                    onClick={() => handleRemoveRepo(repo.id)}
+                    className="text-xs text-[rgba(239,68,68,0.7)] hover:text-[#ef4444] transition-colors cursor-pointer flex-shrink-0"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            ))}
+
+            {addingRepo ? (
+              <div className="flex flex-col gap-2 pt-2">
+                <input
+                  type="text"
+                  placeholder="Repository name"
+                  value={newRepoName}
+                  onChange={e => setNewRepoName(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg text-sm text-white bg-[rgba(255,255,255,0.05)] border border-[rgba(99,102,241,0.2)] focus:border-[rgba(99,102,241,0.5)] focus:outline-none"
+                />
+                <input
+                  type="text"
+                  placeholder="Git repository URL (e.g. https://github.com/org/CKAN-meta.git)"
+                  value={newRepoUrl}
+                  onChange={e => setNewRepoUrl(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg text-sm text-white bg-[rgba(255,255,255,0.05)] border border-[rgba(99,102,241,0.2)] focus:border-[rgba(99,102,241,0.5)] focus:outline-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAddRepo}
+                    disabled={!newRepoName.trim() || !newRepoUrl.trim()}
+                    className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-[rgba(99,102,241,0.8)] hover:bg-[rgba(99,102,241,1)] text-white border border-[rgba(99,102,241,0.4)] transition-colors cursor-pointer disabled:opacity-40"
+                  >
+                    Add
+                  </button>
+                  <button
+                    onClick={() => { setAddingRepo(false); setNewRepoName(''); setNewRepoUrl('') }}
+                    className="px-4 py-1.5 rounded-lg text-sm text-[rgba(148,163,184,0.7)] hover:text-white transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setAddingRepo(true)}
+                className="text-sm text-[rgba(99,102,241,0.8)] hover:text-[#818cf8] transition-colors cursor-pointer text-left"
+              >
+                + Add repository
+              </button>
+            )}
           </div>
         </section>
 

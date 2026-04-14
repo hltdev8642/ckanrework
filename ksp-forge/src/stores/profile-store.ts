@@ -24,6 +24,7 @@ interface ProfileState {
   fetchInstalledMods: (profileId: string) => Promise<void>
   getActiveProfile: () => ProfileRow | undefined
   clearSwitchResult: () => void
+  uninstallMod: (identifier: string) => Promise<void>
 }
 
 export const useProfileStore = create<ProfileState>((set, get) => ({
@@ -129,5 +130,16 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   getActiveProfile: () => {
     const { profiles, activeProfileId } = get()
     return profiles.find((p) => p.id === activeProfileId)
+  },
+
+  uninstallMod: async (identifier) => {
+    const profile = get().getActiveProfile()
+    if (!profile) return
+    try {
+      await api.installer.uninstall(profile.id, identifier, profile.ksp_path)
+      await get().fetchInstalledMods(profile.id)
+    } catch (err) {
+      console.error('Uninstall failed:', err)
+    }
   },
 }))

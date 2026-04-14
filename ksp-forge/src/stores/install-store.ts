@@ -176,15 +176,17 @@ async function processQueue() {
 
       const results = await Promise.allSettled(
         batch.map(mod =>
-          api.installer.install(mod, profile.ksp_path, profile.id).then(() => mod.identifier)
+          api.installer.install(mod, profile.ksp_path, profile.id, mod.isDependency).then(() => mod.identifier)
         )
       )
 
       const now = Date.now()
+      const batchInstalled: string[] = []
       for (let j = 0; j < results.length; j++) {
         const result = results[j]
         const mod = batch[j]
         if (result.status === 'fulfilled') {
+          batchInstalled.push(mod.identifier)
           useInstallStore.setState(s => ({
             history: [...s.history, { identifier: mod.identifier, status: 'completed', timestamp: now }],
           }))
@@ -194,6 +196,13 @@ async function processQueue() {
           useInstallStore.setState(s => ({
             history: [...s.history, { identifier: mod.identifier, status: 'failed', timestamp: now }],
           }))
+        }
+      }
+
+      // Rollback batch on any failure
+      if (failed.length > 0 && batchInstalled.length > 0) {
+        for (const id of batchInstalled) {
+          try { await api.installer.uninstall(profile.id, id, profile.ksp_path) } catch { /* best-effort */ }
         }
       }
     }

@@ -79,14 +79,29 @@ export function registerIpcHandlers(services: Services): void {
     return imageScraper.scrapeForumDescription(identifier)
   })
 
+  // Dedup map: identifier -> in-flight promise so concurrent card renders
+  // don't each spawn their own BrowserWindow scrape.
+  const firstForumImageInflight = new Map<string, Promise<string | null>>()
+
   ipcMain.handle('images:firstForumImage', async (_event, identifier: string) => {
-    // Try to get the first image from cached forum data
+    // Serve from memory cache immediately
     const cached = imageScraper.getCachedImages(identifier)
     if (cached && cached.length > 0) return cached[0]
-    // If not cached yet, trigger a forum scrape and return first image
-    await imageScraper.scrapeForumDescription(identifier)
-    const images = imageScraper.getCachedImages(identifier)
-    return images && images.length > 0 ? images[0] : null
+
+    // Deduplicate concurrent requests for the same identifier
+    if (firstForumImageInflight.has(identifier)) {
+      return firstForumImageInflight.get(identifier)!
+    }
+
+    const promise = imageScraper.scrapeForumDescription(identifier).then(() => {
+      const images = imageScraper.getCachedImages(identifier)
+      return images && images.length > 0 ? images[0] : null
+    }).finally(() => {
+      firstForumImageInflight.delete(identifier)
+    })
+
+    firstForumImageInflight.set(identifier, promise)
+    return promise
   })
 
   // --- Resolver ---
@@ -95,7 +110,7 @@ export function registerIpcHandlers(services: Services): void {
   })
 
   // --- Installer ---
-  ipcMain.handle('installer:install', async (_event, resolvedMod: any, kspPath: string, profileId: string) => {
+  ipcMain.handle('installer:install', async (_event, resolvedMod: any, kspPath: string, profileId: string, isDependency?: boolean) => {
     log.info(`Installing mod: ${resolvedMod.identifier} v${resolvedMod.version} to profile ${profileId}`)
     const tempDir = path.join(os.tmpdir(), 'ksp-forge-install')
     const plan = installer.buildInstallPlan([resolvedMod])
@@ -134,6 +149,7 @@ export function registerIpcHandlers(services: Services): void {
       version: item.version,
       installed_files: JSON.stringify(files),
       installed_at: Date.now(),
+      is_dependency: isDependency ? 1 : 0,
     })
 
     // Cache mod files for future profile switches
@@ -285,6 +301,7 @@ export function registerIpcHandlers(services: Services): void {
       win?.webContents.send('meta:sync-progress', { current, total, phase })
     })
     log.info(`Meta sync complete: ${count} mods indexed`)
+    db.setSetting('last_sync_time', Date.now().toString())
     return { count }
   })
 
@@ -307,7 +324,97 @@ export function registerIpcHandlers(services: Services): void {
   })
 
   ipcMain.handle('meta:getLastSync', () => {
-    return null
+    const ts = db.getSetting('last_sync_time')
+    return ts ? parseInt(ts, 10) : null
+  })
+
+  // --- Repositories ---
+  ipcMain.handle('repos:getAll', () => {
+    return db.getRepositories()
+  })
+
+  ipcMain.handle('repos:add', (_event, repo: { id: string; name: string; url: string; enabled: number; priority: number }) => {
+    db.upsertRepository(repo)
+    return { success: true }
+  })
+
+  ipcMain.handle('repos:update', (_event, repo: { id: string; name: string; url: string; enabled: number; priority: number }) => {
+    db.upsertRepository(repo)
+    return { success: true }
+  })
+
+  ipcMain.handle('repos:remove', (_event, id: string) => {
+    db.deleteRepository(id)
+    return { success: true }
+  })
+
+  // --- Audit ---
+  ipcMain.handle('profiles:audit', (_event, profileId: string) => {
+    const installed = db.getInstalledMods(profileId)
+    const profileRow = db.getProfile(profileId)
+    const kspVersion = profileRow?.ksp_version ?? ''
+    const installedSet = new Set(installed.map(m => m.identifier))
+
+    const updates: Array<{ identifier: string; installedVersion: string; availableVersion: string }> = []
+    const missingDeps: Array<{ identifier: string; missingDep: string }> = []
+    const incompatible: Array<{ identifier: string; version: string }> = []
+    const orphans: Array<{ identifier: string; version: string }> = []
+
+    for (const mod of installed) {
+      const modRow = db.getMod(mod.identifier)
+      // Update check
+      if (modRow && modRow.latest_version && modRow.latest_version !== mod.version) {
+        updates.push({ identifier: mod.identifier, installedVersion: mod.version, availableVersion: modRow.latest_version })
+      }
+      // Dependency check
+      const versions = db.getModVersions(mod.identifier)
+      const vRow = versions.find(v => v.version === mod.version) ?? versions[0]
+      if (vRow?.depends) {
+        const deps: Array<{ name: string }> = JSON.parse(vRow.depends)
+        for (const dep of deps) {
+          if (!installedSet.has(dep.name)) {
+            missingDeps.push({ identifier: mod.identifier, missingDep: dep.name })
+          }
+        }
+      }
+      // Orphan check (dependency that nothing directly installed depends on)
+      if (mod.is_dependency === 1) {
+        const neededBy = installed.filter(m => {
+          if (m.identifier === mod.identifier) return false
+          const vs = db.getModVersions(m.identifier)
+          const vr = vs.find(v => v.version === m.version) ?? vs[0]
+          if (!vr?.depends) return false
+          const deps: Array<{ name: string }> = JSON.parse(vr.depends)
+          return deps.some(d => d.name === mod.identifier)
+        })
+        if (neededBy.length === 0) orphans.push({ identifier: mod.identifier, version: mod.version })
+      }
+      // Compat check
+      if (kspVersion && vRow) {
+        const compat = vRow.ksp_version === 'any' || !vRow.ksp_version && !vRow.ksp_version_min && !vRow.ksp_version_max
+        if (!compat && vRow.ksp_version && !vRow.ksp_version.startsWith(kspVersion.slice(0,3))) {
+          incompatible.push({ identifier: mod.identifier, version: mod.version })
+        }
+      }
+    }
+
+    return { updates, missingDeps, incompatible, orphans }
+  })
+
+  ipcMain.handle('profiles:getOrphans', (_event, profileId: string) => {
+    const installed = db.getInstalledMods(profileId)
+    const installedSet = new Set(installed.map(m => m.identifier))
+    // Build set of all declared dependency names
+    const neededDeps = new Set<string>()
+    for (const mod of installed) {
+      const versions = db.getModVersions(mod.identifier)
+      const vRow = versions.find(v => v.version === mod.version) ?? versions[0]
+      if (vRow?.depends) {
+        const deps: Array<{ name: string }> = JSON.parse(vRow.depends)
+        deps.forEach(d => neededDeps.add(d.name))
+      }
+    }
+    return installed.filter(m => m.is_dependency === 1 && installedSet.has(m.identifier) && !neededDeps.has(m.identifier))
   })
 
   // --- Update check ---

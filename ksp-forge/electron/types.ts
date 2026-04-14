@@ -12,6 +12,8 @@ export interface CkanMetadata {
   recommends?: Relationship[]
   suggests?: Relationship[]
   conflicts?: Relationship[]
+  provides?: string[]
+  replaced_by?: { name: string; version?: string }
   install: InstallDirective[]
   download: string
   download_size?: number
@@ -74,6 +76,7 @@ export interface ModVersionRow {
   recommends: string | null
   suggests: string | null
   conflicts: string | null
+  provides: string | null   // JSON array of virtual package names this mod provides
   install_directives: string
 }
 
@@ -103,4 +106,13 @@ export interface InstalledModRow {
   version: string
   installed_files: string
   installed_at: number
+  is_dependency: number   // 0 = directly installed, 1 = installed as dependency
+}
+
+export interface RepositoryRow {
+  id: string
+  name: string
+  url: string
+  enabled: number   // 0 | 1
+  priority: number
 }

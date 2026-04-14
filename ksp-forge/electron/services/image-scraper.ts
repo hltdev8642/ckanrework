@@ -428,6 +428,11 @@ export class ImageScraperService {
 
     return new Promise((resolve) => {
       if (this.activeBrowsers >= this.MAX_BROWSERS) {
+        // Cap the queue — if too many are pending, skip rather than freeze the app
+        if (this.browserQueue.length >= 6) {
+          resolve(null)
+          return
+        }
         // Queue it
         this.browserQueue.push({ url, resolve })
         return

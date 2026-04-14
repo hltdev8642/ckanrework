@@ -1,6 +1,14 @@
 import { create } from 'zustand'
 
-export type ViewName = 'discover' | 'installed' | 'downloads' | 'profiles' | 'settings' | 'mod-detail'
+export type ViewName = 'discover' | 'installed' | 'downloads' | 'profiles' | 'settings' | 'mod-detail' | 'audit'
+
+export interface AdvancedFilters {
+  author: string
+  tag: string
+  license: string
+  installed: '' | 'yes' | 'no'
+  compat: string
+}
 
 interface FilterState {
   sortBy: 'name' | 'downloads' | 'updated'
@@ -30,6 +38,7 @@ interface UiState extends FilterState {
   selectedModId: string | null
   searchQuery: string
   discoverScrollPosition: number
+  advancedFilters: AdvancedFilters
 
   setView: (view: ViewName) => void
   setSelectedMod: (id: string | null) => void
@@ -43,6 +52,8 @@ interface UiState extends FilterState {
   openModDetail: (id: string) => void
   goBack: () => void
   setDiscoverScrollPosition: (pos: number) => void
+  setAdvancedFilters: (filters: Partial<AdvancedFilters>) => void
+  clearAdvancedFilters: () => void
 }
 
 const savedFilters = loadFilters()
@@ -53,6 +64,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   selectedModId: null,
   searchQuery: '',
   discoverScrollPosition: 0,
+  advancedFilters: { author: '', tag: '', license: '', installed: '', compat: '' },
   ...savedFilters,
 
   setView: (view) =>
@@ -118,4 +130,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
 
   setDiscoverScrollPosition: (pos) => set({ discoverScrollPosition: pos }),
+
+  setAdvancedFilters: (filters) =>
+    set(s => ({ advancedFilters: { ...s.advancedFilters, ...filters } })),
+
+  clearAdvancedFilters: () =>
+    set({ advancedFilters: { author: '', tag: '', license: '', installed: '', compat: '' } }),
 }))

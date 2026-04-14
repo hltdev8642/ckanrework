@@ -10,6 +10,7 @@ import { ModDetail } from '../mods/ModDetail'
 import { ProfileList } from '../profiles/ProfileList'
 import { SettingsView } from '../settings/SettingsView'
 import { DownloadsView } from '../downloads/DownloadsView'
+import { AuditView } from '../audit/AuditView'
 
 export function AppShell() {
   const { currentView } = useUiStore()
@@ -69,6 +70,8 @@ export function AppShell() {
         return <ProfileList />
       case 'settings':
         return <SettingsView />
+      case 'audit':
+        return <AuditView />
       default:
         return <ModGrid filter="all" />
     }

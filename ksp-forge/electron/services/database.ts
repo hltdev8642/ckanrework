@@ -5,11 +5,18 @@ import type {
   SpaceDockCacheRow,
   ProfileRow,
   InstalledModRow,
+  RepositoryRow,
 } from '../types'
 
+/** Parse a version string into numeric parts, handling non-numeric segments and 'v' prefix. */
+function parseVersionParts(v: string): number[] {
+  const cleaned = v.replace(/^v/i, '')
+  return cleaned.split('.').map(p => { const n = parseInt(p, 10); return isNaN(n) ? 0 : n })
+}
+
 function compareVersionStrings(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
+  const pa = parseVersionParts(a)
+  const pb = parseVersionParts(b)
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const va = pa[i] ?? 0
     const vb = pb[i] ?? 0
@@ -70,6 +77,7 @@ export class DatabaseService {
         recommends          TEXT,
         suggests            TEXT,
         conflicts           TEXT,
+        provides            TEXT,
         install_directives  TEXT NOT NULL,
         PRIMARY KEY (identifier, version)
       );
@@ -100,7 +108,21 @@ export class DatabaseService {
         version          TEXT NOT NULL,
         installed_files  TEXT NOT NULL,
         installed_at     INTEGER NOT NULL,
+        is_dependency    INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (profile_id, identifier)
+      );
+
+      CREATE TABLE IF NOT EXISTS repositories (
+        id       TEXT PRIMARY KEY,
+        name     TEXT NOT NULL,
+        url      TEXT NOT NULL,
+        enabled  INTEGER NOT NULL DEFAULT 1,
+        priority INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       );
 
       CREATE VIRTUAL TABLE IF NOT EXISTS mods_fts USING fts5(
@@ -131,26 +153,44 @@ export class DatabaseService {
       END;
     `)
 
+    // Seed default CKAN repository if table is empty
+    const repoCount = (this.db.prepare(`SELECT COUNT(*) as n FROM repositories`).get() as { n: number }).n
+    if (repoCount === 0) {
+      this.db.prepare(
+        `INSERT INTO repositories (id, name, url, enabled, priority) VALUES (?, ?, ?, 1, 0)`
+      ).run('official', 'CKAN Official', 'https://github.com/KSP-CKAN/CKAN-meta.git')
+    }
+
     // Migrations for existing databases
     try {
+      const mvCols = this.db.prepare("PRAGMA table_info(mod_versions)").all() as Array<{ name: string; notnull: number }>
+
       // Make download_url nullable (was NOT NULL in older versions)
-      const cols = this.db.prepare("PRAGMA table_info(mod_versions)").all() as Array<{ name: string; notnull: number }>
-      const dlCol = cols.find(c => c.name === 'download_url')
+      const dlCol = mvCols.find(c => c.name === 'download_url')
       if (dlCol && dlCol.notnull === 1) {
-        // SQLite can't ALTER COLUMN, recreate table
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS mod_versions_new (
             identifier TEXT NOT NULL, version TEXT NOT NULL,
             ksp_version TEXT, ksp_version_min TEXT, ksp_version_max TEXT,
             download_url TEXT, download_hash TEXT, download_size INTEGER,
             depends TEXT, recommends TEXT, suggests TEXT, conflicts TEXT,
+            provides TEXT,
             install_directives TEXT NOT NULL,
             PRIMARY KEY (identifier, version)
           );
-          INSERT OR IGNORE INTO mod_versions_new SELECT * FROM mod_versions;
+          INSERT OR IGNORE INTO mod_versions_new SELECT *, NULL FROM mod_versions;
           DROP TABLE mod_versions;
           ALTER TABLE mod_versions_new RENAME TO mod_versions;
         `)
+      } else if (!mvCols.find(c => c.name === 'provides')) {
+        // Add provides column to existing mod_versions table
+        this.db.exec(`ALTER TABLE mod_versions ADD COLUMN provides TEXT`)
+      }
+
+      // Add is_dependency to installed_mods if missing
+      const imCols = this.db.prepare("PRAGMA table_info(installed_mods)").all() as Array<{ name: string }>
+      if (!imCols.find(c => c.name === 'is_dependency')) {
+        this.db.exec(`ALTER TABLE installed_mods ADD COLUMN is_dependency INTEGER NOT NULL DEFAULT 0`)
       }
     } catch { /* migration already applied or not needed */ }
   }
@@ -225,11 +265,11 @@ export class DatabaseService {
         `INSERT INTO mod_versions (
           identifier, version, ksp_version, ksp_version_min, ksp_version_max,
           download_url, download_hash, download_size,
-          depends, recommends, suggests, conflicts, install_directives
+          depends, recommends, suggests, conflicts, provides, install_directives
         ) VALUES (
           @identifier, @version, @ksp_version, @ksp_version_min, @ksp_version_max,
           @download_url, @download_hash, @download_size,
-          @depends, @recommends, @suggests, @conflicts, @install_directives
+          @depends, @recommends, @suggests, @conflicts, @provides, @install_directives
         )
         ON CONFLICT(identifier, version) DO UPDATE SET
           ksp_version         = excluded.ksp_version,
@@ -242,6 +282,7 @@ export class DatabaseService {
           recommends          = excluded.recommends,
           suggests            = excluded.suggests,
           conflicts           = excluded.conflicts,
+          provides            = excluded.provides,
           install_directives  = excluded.install_directives`
       )
       .run(version)
@@ -318,14 +359,15 @@ export class DatabaseService {
   addInstalledMod(entry: InstalledModRow): void {
     this.db
       .prepare(
-        `INSERT INTO installed_mods (profile_id, identifier, version, installed_files, installed_at)
-         VALUES (@profile_id, @identifier, @version, @installed_files, @installed_at)
+        `INSERT INTO installed_mods (profile_id, identifier, version, installed_files, installed_at, is_dependency)
+         VALUES (@profile_id, @identifier, @version, @installed_files, @installed_at, @is_dependency)
          ON CONFLICT(profile_id, identifier) DO UPDATE SET
            version         = excluded.version,
            installed_files = excluded.installed_files,
-           installed_at    = excluded.installed_at`
+           installed_at    = excluded.installed_at,
+           is_dependency   = excluded.is_dependency`
       )
-      .run(entry)
+      .run({ ...entry, is_dependency: entry.is_dependency ?? 0 })
   }
 
   removeInstalledMod(profileId: string, identifier: string): void {
@@ -338,6 +380,53 @@ export class DatabaseService {
     return this.db
       .prepare(`SELECT * FROM installed_mods WHERE profile_id = @profile_id ORDER BY identifier`)
       .all({ profile_id: profileId }) as InstalledModRow[]
+  }
+
+  /** Get all mod_versions rows that declare provides (non-null). */
+  getModVersionsWithProvides(): Array<{ identifier: string; version: string; provides: string }> {
+    return this.db
+      .prepare(`SELECT identifier, version, provides FROM mod_versions WHERE provides IS NOT NULL`)
+      .all() as Array<{ identifier: string; version: string; provides: string }>
+  }
+
+  // --- Repositories ---
+
+  getRepositories(): RepositoryRow[] {
+    return this.db
+      .prepare(`SELECT * FROM repositories ORDER BY priority, name`)
+      .all() as RepositoryRow[]
+  }
+
+  upsertRepository(repo: RepositoryRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO repositories (id, name, url, enabled, priority)
+         VALUES (@id, @name, @url, @enabled, @priority)
+         ON CONFLICT(id) DO UPDATE SET
+           name     = excluded.name,
+           url      = excluded.url,
+           enabled  = excluded.enabled,
+           priority = excluded.priority`
+      )
+      .run(repo)
+  }
+
+  deleteRepository(id: string): void {
+    this.db.prepare(`DELETE FROM repositories WHERE id = @id`).run({ id })
+  }
+
+  // --- Settings ---
+
+  getSetting(key: string): string | null {
+    const row = this.db.prepare(`SELECT value FROM settings WHERE key = @key`).get({ key }) as { value: string } | undefined
+    return row?.value ?? null
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db.prepare(
+      `INSERT INTO settings (key, value) VALUES (@key, @value)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    ).run({ key, value })
   }
 
   getModCount(): number {
@@ -353,15 +442,7 @@ export class DatabaseService {
     return rows
       .map(r => r.ksp_version)
       .filter(v => /^\d+(\.\d+)*$/.test(v))
-      .sort((a, b) => {
-        const pa = a.split('.').map(Number)
-        const pb = b.split('.').map(Number)
-        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-          const diff = (pb[i] ?? 0) - (pa[i] ?? 0)
-          if (diff !== 0) return diff
-        }
-        return 0
-      })
+      .sort((a, b) => compareVersionStrings(b, a))
   }
 
   runInTransaction(fn: () => void): void {

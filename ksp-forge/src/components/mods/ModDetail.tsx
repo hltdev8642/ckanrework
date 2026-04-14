@@ -52,7 +52,7 @@ function renderDescription(sdData: SpaceDockCacheRow | null, mod: { abstract: st
 export function ModDetail() {
   const { selectedModId, goBack } = useUiStore()
   const { mods, fetchSpaceDockData, fetchModVersions } = useModStore()
-  const { installedMods, activeProfileId, fetchInstalledMods } = useProfileStore()
+  const { installedMods, activeProfileId, fetchInstalledMods, uninstallMod } = useProfileStore()
   const { resolution, showDialog, installing, progress, requestInstall, confirmInstall, cancelInstall } = useInstallStore()
 
   const [sdData, setSdData] = useState<SpaceDockCacheRow | null>(null)
@@ -71,6 +71,7 @@ export function ModDetail() {
 
   const isInstalled = installedMods.some((m) => m.identifier === selectedModId)
   const installedVersion = installedMods.find((m) => m.identifier === selectedModId)?.version
+  const hasUpdate = isInstalled && mod?.latest_version && installedVersion && mod.latest_version !== installedVersion
 
   useEffect(() => {
     if (!mod) return
@@ -351,30 +352,36 @@ export function ModDetail() {
 
           {/* Right sidebar */}
           <div className="w-[220px] flex-shrink-0 flex flex-col gap-4">
-            {/* Install / Uninstall button */}
-            <div>
+            {/* Install / Update / Uninstall buttons */}
+            <div className="flex flex-col gap-2">
               {isInstalled ? (
-                <button
-                  onClick={async () => {
-                    if (!activeProfileId) return
-                    const prof = useProfileStore.getState().getActiveProfile()
-                    if (!prof) return
-                    try {
-                      await window.electronAPI.installer.uninstall(activeProfileId, mod.identifier, prof.ksp_path)
-                      await fetchInstalledMods(activeProfileId)
-                    } catch (err) {
-                      console.error('Uninstall failed:', err)
-                    }
-                  }}
-                  className="
-                    w-full py-2.5 rounded-lg text-sm font-semibold
-                    bg-[rgba(239,68,68,0.12)] text-[rgba(252,165,165,0.9)]
-                    border border-[rgba(239,68,68,0.25)]
-                    hover:bg-[rgba(239,68,68,0.2)] transition-colors cursor-pointer
-                  "
-                >
-                  ✓ Installed ({installedVersion}) — Uninstall
-                </button>
+                <>
+                  {hasUpdate && (
+                    <button
+                      onClick={() => requestInstall([mod.identifier])}
+                      disabled={installing}
+                      className="
+                        w-full py-2.5 rounded-lg text-sm font-semibold
+                        bg-[rgba(59,130,246,0.8)] text-white
+                        border border-[rgba(59,130,246,0.4)]
+                        hover:bg-blue-500 transition-colors cursor-pointer
+                      "
+                    >
+                      ↑ Update to {mod.latest_version}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => uninstallMod(mod.identifier)}
+                    className="
+                      w-full py-2.5 rounded-lg text-sm font-semibold
+                      bg-[rgba(239,68,68,0.12)] text-[rgba(252,165,165,0.9)]
+                      border border-[rgba(239,68,68,0.25)]
+                      hover:bg-[rgba(239,68,68,0.2)] transition-colors cursor-pointer
+                    "
+                  >
+                    ✓ Installed ({installedVersion}) — Uninstall
+                  </button>
+                </>
               ) : (
                 <button
                   disabled={installing || !activeProfileId}

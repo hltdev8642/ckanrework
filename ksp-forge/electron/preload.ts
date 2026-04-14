@@ -24,8 +24,8 @@ const api = {
       ipcRenderer.invoke('resolver:resolve', identifiers, kspVersion, profileId),
   },
   installer: {
-    install: (item: any, kspPath: string, profileId: string) =>
-      ipcRenderer.invoke('installer:install', item, kspPath, profileId),
+    install: (item: any, kspPath: string, profileId: string, isDependency?: boolean) =>
+      ipcRenderer.invoke('installer:install', item, kspPath, profileId, isDependency),
     uninstall: (profileId: string, identifier: string, kspPath: string) =>
       ipcRenderer.invoke('installer:uninstall', profileId, identifier, kspPath),
     onProgress: (callback: (data: any) => void) => {
@@ -48,6 +48,14 @@ const api = {
     autoDetect: () => ipcRenderer.invoke('profiles:autoDetect') as Promise<{ path: string; source: string; version: string }[]>,
     scanInstalled: (profileId: string) => ipcRenderer.invoke('profiles:scanInstalled', profileId) as Promise<{ found: number; mods: string[] }>,
     switch: (fromId: string, toId: string) => ipcRenderer.invoke('profiles:switch', fromId, toId) as Promise<{ removed: string[]; restored: string[]; needsDownload: string[] }>,
+    audit: (profileId: string) => ipcRenderer.invoke('profiles:audit', profileId) as Promise<{ updates: any[]; missingDeps: any[]; incompatible: any[]; orphans: any[] }>,
+    getOrphans: (profileId: string) => ipcRenderer.invoke('profiles:getOrphans', profileId) as Promise<any[]>,
+  },
+  repos: {
+    getAll: () => ipcRenderer.invoke('repos:getAll') as Promise<any[]>,
+    add: (repo: { id: string; name: string; url: string; enabled: number; priority: number }) => ipcRenderer.invoke('repos:add', repo) as Promise<{ success: boolean }>,
+    update: (repo: { id: string; name: string; url: string; enabled: number; priority: number }) => ipcRenderer.invoke('repos:update', repo) as Promise<{ success: boolean }>,
+    remove: (id: string) => ipcRenderer.invoke('repos:remove', id) as Promise<{ success: boolean }>,
   },
   modCache: {
     getSize: () => ipcRenderer.invoke('modcache:getSize') as Promise<number>,

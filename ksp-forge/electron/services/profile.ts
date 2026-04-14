@@ -83,6 +83,7 @@ export class ProfileService {
         version: mod.version,
         installed_files: mod.installed_files,
         installed_at: now,
+        is_dependency: mod.is_dependency ?? 0,
       })
     }
 
@@ -301,6 +302,7 @@ export class ProfileService {
             version: String(ckanMod.version),
             installed_files: JSON.stringify(ckanMod.files || []),
             installed_at: Date.now(),
+            is_dependency: 0,
           })
           alreadyInstalled.add(ckanMod.identifier)
           foundMods.push(ckanMod.identifier)
@@ -356,6 +358,7 @@ export class ProfileService {
               version: match.version,
               installed_files: JSON.stringify(files),
               installed_at: Date.now(),
+              is_dependency: 0,
             })
             foundMods.push(match.identifier)
           }

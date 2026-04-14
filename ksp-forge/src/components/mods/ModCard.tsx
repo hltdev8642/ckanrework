@@ -12,11 +12,13 @@ interface ModCardProps {
   mod: ModRow
   isInstalled: boolean
   incompatible?: boolean
+  hasUpdate?: boolean
   onInstall: (identifier: string) => void
   onOpenDetail?: (identifier: string) => void
+  onUninstall?: () => void
 }
 
-export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, onInstall, onOpenDetail }: ModCardProps) {
+export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, hasUpdate, onInstall, onOpenDetail, onUninstall }: ModCardProps) {
   const { openModDetail } = useUiStore()
   const handleOpenDetail = onOpenDetail ?? openModDetail
   const { spacedockCache } = useModStore()
@@ -34,34 +36,45 @@ export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, o
 
     let cancelled = false
 
-    // Try SpaceDock cached image first
-    if (sdData?.background_url) {
-      api.spacedock.getCachedImageUrl(mod.identifier).then((url) => {
-        if (!cancelled && url) {
-          imageUrlCache.set(mod.identifier, url)
-          setCachedImageUrl(url)
-        }
-      })
-    } else {
-      // No SpaceDock banner — try first forum image if mod has a forum link
-      const resources = mod.resources ? JSON.parse(mod.resources) : {}
-      if (resources.homepage?.includes('forum.kerbalspaceprogram.com')) {
-        api.images.firstForumImage(mod.identifier).then((url) => {
+    // Delay before firing IPC: cards that unmount quickly (fast scroll) won't
+    // trigger a forum browser scrape, preventing queue buildup and freezes.
+    const timer = setTimeout(() => {
+      if (cancelled) return
+
+      // Try SpaceDock cached image first
+      if (sdData?.background_url) {
+        api.spacedock.getCachedImageUrl(mod.identifier).then((url) => {
           if (!cancelled && url) {
             imageUrlCache.set(mod.identifier, url)
             setCachedImageUrl(url)
           }
-        }).catch(() => {})
+        })
+      } else {
+        // No SpaceDock banner — try first forum image if mod has a forum link
+        const resources = mod.resources ? JSON.parse(mod.resources) : {}
+        if (resources.homepage?.includes('forum.kerbalspaceprogram.com')) {
+          api.images.firstForumImage(mod.identifier).then((url) => {
+            if (!cancelled && url) {
+              imageUrlCache.set(mod.identifier, url)
+              setCachedImageUrl(url)
+            }
+          }).catch(() => {})
+        }
       }
-    }
+    }, 400)
 
-    return () => { cancelled = true }
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [mod.identifier, sdData?.background_url])
 
   const handleInstall = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
     onInstall(mod.identifier)
   }, [mod.identifier, onInstall])
+
+  const handleUninstall = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    onUninstall?.()
+  }, [onUninstall])
 
   const bannerUrl = cachedImageUrl ?? sdData?.background_url ?? null
   const downloads = sdData?.downloads ?? null
@@ -99,10 +112,28 @@ export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, o
         <div className="absolute inset-0 bg-gradient-to-t from-[rgba(13,13,26,0.8)] to-transparent" />
 
         {isInstalled && (
-          <div className={`absolute top-2 right-2 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-            incompatible ? 'bg-[rgba(245,158,11,0.9)]' : 'bg-[rgba(34,197,94,0.9)]'
-          }`}>
-            {incompatible ? '⚠ Installed' : 'Installed'}
+          <div className="absolute top-2 right-2 flex items-center gap-1">
+            {hasUpdate && (
+              <span
+                onClick={(e) => { e.stopPropagation(); onInstall(mod.identifier) }}
+                className="text-white text-[10px] font-semibold px-2 py-0.5 rounded-full cursor-pointer bg-[rgba(59,130,246,0.9)] hover:bg-blue-500"
+              >
+                ↑ Update
+              </span>
+            )}
+            <span className={`text-white text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+              incompatible ? 'bg-[rgba(245,158,11,0.9)]' : 'bg-[rgba(34,197,94,0.9)]'
+            }`}>
+              {incompatible ? '⚠ Installed' : 'Installed'}
+            </span>
+            {onUninstall && (
+              <button
+                onClick={handleUninstall}
+                className="text-white text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[rgba(239,68,68,0.8)] hover:bg-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                Remove
+              </button>
+            )}
           </div>
         )}
 

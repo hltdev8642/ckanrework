@@ -13,6 +13,7 @@ const NAV_ITEMS: NavItem[] = [
   { view: 'installed', label: 'Installed', icon: '📦' },
   { view: 'downloads', label: 'Downloads', icon: '⬇' },
   { view: 'profiles', label: 'Profiles', icon: '📋' },
+  { view: 'audit', label: 'Audit', icon: '🔍' },
   { view: 'settings', label: 'Settings', icon: '⚙️' },
 ]
 

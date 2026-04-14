@@ -32,8 +32,8 @@ function getModKspVersion(mod: { ksp_version: string | null; ksp_version_min: st
 
 export function ModGrid({ filter = 'all' }: ModGridProps) {
   const { mods, loading, fetchSpaceDockBatch, spacedockCache } = useModStore()
-  const { installedMods, activeProfileId, fetchInstalledMods } = useProfileStore()
-  const { currentView, filterKspVersionMin, filterKspVersionMax, filterCompatibleOnly, discoverScrollPosition, setDiscoverScrollPosition, openModDetail } = useUiStore()
+  const { installedMods, activeProfileId, fetchInstalledMods, uninstallMod } = useProfileStore()
+  const { currentView, filterKspVersionMin, filterKspVersionMax, filterCompatibleOnly, discoverScrollPosition, setDiscoverScrollPosition, openModDetail, sortBy, advancedFilters, searchQuery } = useUiStore()
   const { getActiveProfile } = useProfileStore()
   const { resolution, showDialog, installing, progress, confirmInstall, cancelInstall, requestInstall } = useInstallStore()
   const parentRef = useRef<HTMLDivElement>(null)
@@ -65,6 +65,18 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
   }, [])
 
   const isInstalledView = currentView === 'installed' || filter === 'installed'
+
+  // Build set of installed mods that have an update available
+  const updatesAvailableSet = useMemo(() => {
+    const set = new Set<string>()
+    for (const im of installedMods) {
+      const modRow = mods.find(m => m.identifier === im.identifier)
+      if (modRow && modRow.latest_version && modRow.latest_version !== im.version) {
+        set.add(im.identifier)
+      }
+    }
+    return set
+  }, [installedMods, mods])
 
   // Compute incompatible mods for the installed view
   const activeProfile = getActiveProfile()
@@ -99,50 +111,86 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
   const displayedMods = useMemo(() => {
     let result = isInstalledView
       ? mods.filter((m) => installedSet.has(m.identifier))
-      : mods.filter((m) => !installedSet.has(m.identifier)) // hide installed from Discover
+      : mods.filter((m) => !installedSet.has(m.identifier))
 
-    // Filters only apply to Discover, not Installed
-    if (isInstalledView) return result
-
-    // KSP version range filter
-    if (filterKspVersionMin) {
-      result = result.filter((m) => {
-        const v = getModKspVersion(m)
-        if (!v) return true // show mods with no version info
-        return compareVersions(v, filterKspVersionMin) >= 0
+    // Advanced filters (always applied)
+    if (advancedFilters.author) {
+      const a = advancedFilters.author.toLowerCase()
+      result = result.filter(m => m.author?.toLowerCase().includes(a))
+    }
+    if (advancedFilters.tag) {
+      const t = advancedFilters.tag.toLowerCase()
+      result = result.filter(m => {
+        if (!m.tags) return false
+        try { return (JSON.parse(m.tags) as string[]).some(tag => tag.toLowerCase().includes(t)) } catch { return false }
       })
     }
-    if (filterKspVersionMax) {
-      result = result.filter((m) => {
-        const v = getModKspVersion(m)
-        if (!v) return true
-        return compareVersions(v, filterKspVersionMax) <= 0
+    if (advancedFilters.license) {
+      const l = advancedFilters.license.toLowerCase()
+      result = result.filter(m => m.license?.toLowerCase().includes(l))
+    }
+    if (advancedFilters.installed === 'yes') {
+      result = result.filter(m => installedSet.has(m.identifier))
+    } else if (advancedFilters.installed === 'no') {
+      result = result.filter(m => !installedSet.has(m.identifier))
+    }
+    if (advancedFilters.compat) {
+      const cv = advancedFilters.compat
+      result = result.filter(m => {
+        if (m.ksp_version === 'any' || (!m.ksp_version && !m.ksp_version_min && !m.ksp_version_max)) return true
+        if (m.ksp_version) {
+          return m.ksp_version.startsWith(cv.slice(0, cv.length >= 3 ? 3 : cv.length))
+        }
+        return true
       })
     }
 
-    // Compatible with active profile
-    if (filterCompatibleOnly) {
-      const profile = getActiveProfile()
-      if (profile && profile.ksp_version !== 'unknown') {
-        const pv = profile.ksp_version
+    // Version range + compat filters for Discover only
+    if (!isInstalledView) {
+      if (filterKspVersionMin) {
         result = result.filter((m) => {
-          if (!m.ksp_version && !m.ksp_version_min && !m.ksp_version_max) return true
-          if (m.ksp_version === 'any') return true
-          if (m.ksp_version) {
-            // Match major.minor
-            const modParts = m.ksp_version.split('.')
-            const profParts = pv.split('.')
-            return modParts[0] === profParts[0] && modParts[1] === profParts[1]
-          }
-          if (m.ksp_version_min && compareVersions(pv, m.ksp_version_min) < 0) return false
-          if (m.ksp_version_max && compareVersions(pv, m.ksp_version_max) > 0) return false
-          return true
+          const v = getModKspVersion(m)
+          if (!v) return true
+          return compareVersions(v, filterKspVersionMin) >= 0
         })
+      }
+      if (filterKspVersionMax) {
+        result = result.filter((m) => {
+          const v = getModKspVersion(m)
+          if (!v) return true
+          return compareVersions(v, filterKspVersionMax) <= 0
+        })
+      }
+      if (filterCompatibleOnly) {
+        const profile = getActiveProfile()
+        if (profile && profile.ksp_version !== 'unknown') {
+          const pv = profile.ksp_version
+          result = result.filter((m) => {
+            if (!m.ksp_version && !m.ksp_version_min && !m.ksp_version_max) return true
+            if (m.ksp_version === 'any') return true
+            if (m.ksp_version) {
+              const modParts = m.ksp_version.split('.')
+              const profParts = pv.split('.')
+              return modParts[0] === profParts[0] && modParts[1] === profParts[1]
+            }
+            if (m.ksp_version_min && compareVersions(pv, m.ksp_version_min) < 0) return false
+            if (m.ksp_version_max && compareVersions(pv, m.ksp_version_max) > 0) return false
+            return true
+          })
+        }
       }
     }
 
+    // Sort
+    if (sortBy === 'name') {
+      result = [...result].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+    } else if (sortBy === 'updated') {
+      result = [...result].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))
+    }
+    // 'downloads' = default DB order (no sort needed)
+
     return result
-  }, [mods, isInstalledView, installedSet, filterKspVersionMin, filterKspVersionMax, filterCompatibleOnly])
+  }, [mods, isInstalledView, installedSet, filterKspVersionMin, filterKspVersionMax, filterCompatibleOnly, sortBy, advancedFilters, searchQuery])
 
   const containerWidth = parentRef.current?.clientWidth ?? 900
   const columns = Math.max(1, Math.floor((containerWidth + GAP) / (240 + GAP)))
@@ -232,7 +280,16 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
                   }}
                 >
                   {rowMods.map((mod) => (
-                    <ModCard key={mod.identifier} mod={mod} isInstalled={installedSet.has(mod.identifier)} incompatible={incompatibleSet.has(mod.identifier)} onInstall={handleCardInstall} onOpenDetail={isInstalledView ? undefined : handleOpenModDetail} />
+                    <ModCard
+                      key={mod.identifier}
+                      mod={mod}
+                      isInstalled={installedSet.has(mod.identifier)}
+                      incompatible={incompatibleSet.has(mod.identifier)}
+                      hasUpdate={updatesAvailableSet.has(mod.identifier)}
+                      onInstall={handleCardInstall}
+                      onOpenDetail={handleOpenModDetail}
+                      onUninstall={isInstalledView ? () => uninstallMod(mod.identifier) : undefined}
+                    />
                   ))}
                 </div>
               )
@@ -242,7 +299,7 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
       </div>
 
       {showDialog && resolution && (
-        <InstallDialog resolution={resolution} installing={installing} onConfirm={confirmInstall} onCancel={cancelInstall} />
+        <InstallDialog resolution={resolution} onConfirm={confirmInstall} onCancel={cancelInstall} />
       )}
     </div>
   )
