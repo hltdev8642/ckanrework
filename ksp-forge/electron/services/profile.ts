@@ -292,9 +292,19 @@ export class ProfileService {
       const ckanRegistryMods = this.readCkanRegistry(profile.ksp_path)
       for (const ckanMod of ckanRegistryMods) {
         try {
-          if (alreadyInstalled.has(ckanMod.identifier)) continue
           const dbMod = this.db.getMod(ckanMod.identifier)
           if (!dbMod) continue
+
+          const existing = this.db.getInstalledMods(profileId).find(m => m.identifier === ckanMod.identifier)
+          if (existing) {
+            // Update if existing version is unknown or if we found a better version
+            if (existing.version === 'unknown' && ckanMod.version !== 'unknown') {
+              this.db.updateInstalledModVersion(profileId, ckanMod.identifier, ckanMod.version)
+              console.log(`[profile] Updated ${ckanMod.identifier} version from unknown to ${ckanMod.version}`)
+            }
+            alreadyInstalled.add(ckanMod.identifier)
+            continue
+          }
 
           this.db.addInstalledMod({
             profile_id: profileId,
@@ -418,7 +428,12 @@ export class ProfileService {
         if (!modEntry || typeof modEntry !== 'object') continue
 
         const modInfo = modEntry.module || modEntry.Module || {}
-        const version = String(modInfo.version || modInfo.Version || 'unknown')
+        let version = String(modInfo.version || modInfo.Version || 'unknown')
+
+        // If version is unknown, try to read it from .ckan files
+        if (version === 'unknown') {
+          version = this.findCkanVersionFromFiles(kspPath, identifier) || 'unknown'
+        }
 
         // Files can be an array of strings or an array of objects
         let rawFiles = modEntry.files || modEntry.Files || modEntry.installed_files || []
@@ -441,6 +456,40 @@ export class ProfileService {
 
     console.log(`[profile] Found ${results.length} mods in CKAN registry`)
     return results
+  }
+
+  private findCkanVersionFromFiles(kspPath: string, identifier: string): string | null {
+    // Look for .ckan files in GameData subdirectories that might match this identifier
+    const gameDataPath = path.join(kspPath, 'GameData')
+    if (!fs.existsSync(gameDataPath)) return null
+
+    try {
+      const entries = fs.readdirSync(gameDataPath, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const modPath = path.join(gameDataPath, entry.name)
+        try {
+          const ckanFiles = fs.readdirSync(modPath).filter(f => f.endsWith('.ckan'))
+          for (const ckanFile of ckanFiles) {
+            try {
+              const ckanPath = path.join(modPath, ckanFile)
+              const content = fs.readFileSync(ckanPath, 'utf-8')
+              const ckanData = JSON.parse(content)
+              if (ckanData.identifier === identifier && ckanData.version) {
+                return String(ckanData.version)
+              }
+            } catch {
+              // Skip unparseable .ckan files
+            }
+          }
+        } catch {
+          // Skip directories we can't read
+        }
+      }
+    } catch {
+      // Skip if GameData is unreadable
+    }
+    return null
   }
 
   private collectFiles(dirPath: string, basePath: string): string[] {

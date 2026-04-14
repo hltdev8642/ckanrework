@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useModStore } from '../../stores/mod-store'
 import { useUiStore } from '../../stores/ui-store'
+import { useProfileStore } from '../../stores/profile-store'
 import { api } from '../../lib/ipc'
 import { formatDate } from '../../lib/format'
 
@@ -17,6 +18,7 @@ function formatBytes(bytes: number): string {
 export function SettingsView() {
   const { modCount, loading, syncMeta, syncError } = useModStore()
   const { concurrentDownloads, setConcurrentDownloads } = useUiStore()
+  const { activeProfileId, fetchInstalledMods } = useProfileStore()
   const [lastSync, setLastSync] = useState<number | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [cacheSize, setCacheSize] = useState<number | null>(null)
@@ -25,6 +27,7 @@ export function SettingsView() {
   const [newRepoName, setNewRepoName] = useState('')
   const [newRepoUrl, setNewRepoUrl] = useState('')
   const [addingRepo, setAddingRepo] = useState(false)
+  const [rescanning, setRescanning] = useState(false)
 
   const loadRepos = async () => {
     const r = await api.repos.getAll()
@@ -55,6 +58,20 @@ export function SettingsView() {
       setLastSync(ts)
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const handleRescanInstalled = async () => {
+    if (!activeProfileId) return
+    setRescanning(true)
+    try {
+      const result = await api.profiles.scanInstalled(activeProfileId)
+      if (result?.found > 0) {
+        console.log(`Rescanned ${result.found} installed mods:`, result.mods)
+        await fetchInstalledMods(activeProfileId)
+      }
+    } finally {
+      setRescanning(false)
     }
   }
 
@@ -132,28 +149,52 @@ export function SettingsView() {
                 Sync the CKAN mod registry to get the latest mods and updates.
                 This downloads metadata for all available KSP mods.
               </p>
-              <button
-                onClick={handleSync}
-                disabled={syncing || loading}
-                className={`
-                  flex-shrink-0 px-4 py-2 rounded-lg text-sm font-semibold
-                  transition-colors
-                  ${
-                    syncing || loading
-                      ? 'bg-[rgba(99,102,241,0.2)] text-[rgba(148,163,184,0.4)] border border-[rgba(99,102,241,0.15)] cursor-not-allowed'
-                      : 'bg-[rgba(99,102,241,0.9)] hover:bg-[rgba(99,102,241,1)] text-white border border-[rgba(99,102,241,0.4)] cursor-pointer'
-                  }
-                `}
-              >
-                {syncing ? (
-                  <span className="flex items-center gap-2">
-                    <span className="animate-spin inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full" />
-                    Syncing...
-                  </span>
-                ) : (
-                  'Sync Now'
-                )}
-              </button>
+              <div className="flex flex-col gap-2 flex-shrink-0">
+                <button
+                  onClick={handleSync}
+                  disabled={syncing || loading}
+                  className={`
+                    px-4 py-2 rounded-lg text-sm font-semibold
+                    transition-colors
+                    ${
+                      syncing || loading
+                        ? 'bg-[rgba(99,102,241,0.2)] text-[rgba(148,163,184,0.4)] border border-[rgba(99,102,241,0.15)] cursor-not-allowed'
+                        : 'bg-[rgba(99,102,241,0.9)] hover:bg-[rgba(99,102,241,1)] text-white border border-[rgba(99,102,241,0.4)] cursor-pointer'
+                    }
+                  `}
+                >
+                  {syncing ? (
+                    <span className="flex items-center gap-2">
+                      <span className="animate-spin inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full" />
+                      Syncing...
+                    </span>
+                  ) : (
+                    'Sync Now'
+                  )}
+                </button>
+                <button
+                  onClick={handleRescanInstalled}
+                  disabled={syncing || loading || rescanning}
+                  className={`
+                    px-4 py-2 rounded-lg text-sm font-semibold
+                    transition-colors
+                    ${
+                      syncing || loading || rescanning
+                        ? 'bg-[rgba(34,197,94,0.2)] text-[rgba(148,163,184,0.4)] border border-[rgba(34,197,94,0.15)] cursor-not-allowed'
+                        : 'bg-[rgba(34,197,94,0.9)] hover:bg-[rgba(34,197,94,1)] text-white border border-[rgba(34,197,94,0.4)] cursor-pointer'
+                    }
+                  `}
+                >
+                  {rescanning ? (
+                    <span className="flex items-center gap-2">
+                      <span className="animate-spin inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full" />
+                      Scanning...
+                    </span>
+                  ) : (
+                    'Rescan Installed'
+                  )}
+                </button>
+              </div>
             </div>
             {syncError && (
               <p className="text-xs text-red-400 bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.2)] rounded-lg px-3 py-2 break-all">

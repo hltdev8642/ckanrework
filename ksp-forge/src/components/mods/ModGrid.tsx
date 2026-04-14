@@ -15,9 +15,19 @@ interface ModGridProps {
 const CARD_HEIGHT = 220
 const GAP = 16
 
+function normalizeVersion(v: string): string {
+  // Strip epoch (e.g. "1:2.3.4" -> "2.3.4") and leading 'v'
+  return v.replace(/^\d+:/, '').replace(/^v/i, '').trim()
+}
+
 function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
+  // Split on both '.' and '-' so "0.9.5-0" parses as [0,9,5,0]
+  const splitVer = (v: string) =>
+    normalizeVersion(v)
+      .split(/[.\-]/)
+      .map(p => { const n = parseInt(p, 10); return isNaN(n) ? 0 : n })
+  const pa = splitVer(a)
+  const pb = splitVer(b)
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const va = pa[i] ?? 0
     const vb = pb[i] ?? 0
@@ -71,7 +81,7 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
     const set = new Set<string>()
     for (const im of installedMods) {
       const modRow = mods.find(m => m.identifier === im.identifier)
-      if (modRow && modRow.latest_version && modRow.latest_version !== im.version) {
+      if (modRow && modRow.latest_version && compareVersions(modRow.latest_version, im.version) > 0) {
         set.add(im.identifier)
       }
     }

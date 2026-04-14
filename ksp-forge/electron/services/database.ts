@@ -8,10 +8,10 @@ import type {
   RepositoryRow,
 } from '../types'
 
-/** Parse a version string into numeric parts, handling non-numeric segments and 'v' prefix. */
+/** Parse a version string into numeric parts, handling non-numeric segments, 'v' prefix, and epoch. */
 function parseVersionParts(v: string): number[] {
-  const cleaned = v.replace(/^v/i, '')
-  return cleaned.split('.').map(p => { const n = parseInt(p, 10); return isNaN(n) ? 0 : n })
+  const cleaned = v.replace(/^\d+:/, '').replace(/^v/i, '')
+  return cleaned.split(/[.\-]/).map(p => { const n = parseInt(p, 10); return isNaN(n) ? 0 : n })
 }
 
 function compareVersionStrings(a: string, b: string): number {
@@ -384,6 +384,12 @@ export class DatabaseService {
     this.db
       .prepare(`DELETE FROM installed_mods WHERE profile_id = @profile_id AND identifier = @identifier`)
       .run({ profile_id: profileId, identifier })
+  }
+
+  updateInstalledModVersion(profileId: string, identifier: string, version: string): void {
+    this.db
+      .prepare(`UPDATE installed_mods SET version = @version WHERE profile_id = @profile_id AND identifier = @identifier`)
+      .run({ profile_id: profileId, identifier, version })
   }
 
   getInstalledMods(profileId: string): InstalledModRow[] {
