@@ -7,6 +7,7 @@ import http from 'http'
 import zlib from 'zlib'
 import * as tar from 'tar'
 import { URL as NodeURL } from 'url'
+import { pipeline } from 'stream/promises'
 import type { CkanMetadata, ModRow, ModVersionRow } from '../types'
 import { DatabaseService } from './database'
 
@@ -71,12 +72,8 @@ function downloadTarball(url: string, dest: string, redirects = 0): Promise<void
         return
       }
       if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true })
-      const gunzip = zlib.createGunzip()
-      const extract = tar.x({ cwd: dest, strip: 1 })
-      gunzip.on('error', reject)
-      extract.on('error', reject)
-      extract.on('finish', resolve)
-      res.on('error', reject).pipe(gunzip).pipe(extract)
+      pipeline(res, zlib.createGunzip(), tar.x({ cwd: dest, strip: 1 }) as any)
+        .then(() => resolve(), reject)
     }).on('error', reject)
   })
 }
@@ -198,10 +195,8 @@ export class MetaSyncService {
         ? this.repoPath
         : path.join(path.dirname(this.repoPath), `ckan-repo-${repo.id}`)
 
-      const normUrl = normaliseRepoUrl(repo.url)
-      const isTarball = normUrl.endsWith('.tar.gz') || normUrl.endsWith('.tgz')
       await this.cloneOrPull(repo.url, localPath)
-      const scanPath = isTarball ? detectScanPath(localPath) : localPath
+      const scanPath = detectScanPath(localPath)
       console.log(`[meta-sync] repo "${repo.name}" → scanPath: ${scanPath}`)
       repoPaths.push(scanPath)
       onProgress?.(i + 1, repos.length, 'downloading')

@@ -247,7 +247,17 @@ export class DatabaseService {
   }
 
   searchMods(query: string): ModRow[] {
-    const sanitized = query.replace(/['"*]/g, ' ').trim()
+    // Strip invalid FTS5 column-filter tokens (e.g. installed:yes, compat:1.12)
+    // Valid FTS columns are: identifier, name, abstract, author, tags
+    const validFtsCols = new Set(['identifier', 'name', 'abstract', 'author', 'tags'])
+    const stripped = query
+      .split(/\s+/)
+      .filter(token => {
+        const m = token.match(/^([a-zA-Z_]+):/)
+        return !m || validFtsCols.has(m[1].toLowerCase())
+      })
+      .join(' ')
+    const sanitized = stripped.replace(/['"*]/g, ' ').trim()
     if (!sanitized) return this.getAllMods()
     return this.db
       .prepare(

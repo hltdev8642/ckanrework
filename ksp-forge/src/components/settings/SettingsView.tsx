@@ -15,7 +15,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function SettingsView() {
-  const { modCount, loading, syncMeta } = useModStore()
+  const { modCount, loading, syncMeta, syncError } = useModStore()
   const { concurrentDownloads, setConcurrentDownloads } = useUiStore()
   const [lastSync, setLastSync] = useState<number | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -155,6 +155,11 @@ export function SettingsView() {
                 )}
               </button>
             </div>
+            {syncError && (
+              <p className="text-xs text-red-400 bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.2)] rounded-lg px-3 py-2 break-all">
+                Sync error: {syncError}
+              </p>
+            )}
           </div>
         </section>
 

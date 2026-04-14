@@ -33,7 +33,7 @@ function getModKspVersion(mod: { ksp_version: string | null; ksp_version_min: st
 export function ModGrid({ filter = 'all' }: ModGridProps) {
   const { mods, loading, fetchSpaceDockBatch, spacedockCache } = useModStore()
   const { installedMods, activeProfileId, fetchInstalledMods, uninstallMod } = useProfileStore()
-  const { currentView, filterKspVersionMin, filterKspVersionMax, filterCompatibleOnly, discoverScrollPosition, setDiscoverScrollPosition, openModDetail, sortBy, advancedFilters, searchQuery } = useUiStore()
+  const { currentView, discoverScrollPosition, setDiscoverScrollPosition, openModDetail, sortBy, advancedFilters, searchQuery } = useUiStore()
   const { getActiveProfile } = useProfileStore()
   const { resolution, showDialog, installing, progress, confirmInstall, cancelInstall, requestInstall } = useInstallStore()
   const parentRef = useRef<HTMLDivElement>(null)
@@ -78,7 +78,7 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
     return set
   }, [installedMods, mods])
 
-  // Compute incompatible mods for the installed view
+  // Compute incompatible mods for the installed view badge (display hint only, not a filter)
   const activeProfile = getActiveProfile()
   const incompatibleSet = useMemo(() => {
     const set = new Set<string>()
@@ -111,7 +111,7 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
   const displayedMods = useMemo(() => {
     let result = isInstalledView
       ? mods.filter((m) => installedSet.has(m.identifier))
-      : mods.filter((m) => !installedSet.has(m.identifier))
+      : [...mods]
 
     // Advanced filters (always applied)
     if (advancedFilters.author) {
@@ -145,42 +145,6 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
       })
     }
 
-    // Version range + compat filters for Discover only
-    if (!isInstalledView) {
-      if (filterKspVersionMin) {
-        result = result.filter((m) => {
-          const v = getModKspVersion(m)
-          if (!v) return true
-          return compareVersions(v, filterKspVersionMin) >= 0
-        })
-      }
-      if (filterKspVersionMax) {
-        result = result.filter((m) => {
-          const v = getModKspVersion(m)
-          if (!v) return true
-          return compareVersions(v, filterKspVersionMax) <= 0
-        })
-      }
-      if (filterCompatibleOnly) {
-        const profile = getActiveProfile()
-        if (profile && profile.ksp_version !== 'unknown') {
-          const pv = profile.ksp_version
-          result = result.filter((m) => {
-            if (!m.ksp_version && !m.ksp_version_min && !m.ksp_version_max) return true
-            if (m.ksp_version === 'any') return true
-            if (m.ksp_version) {
-              const modParts = m.ksp_version.split('.')
-              const profParts = pv.split('.')
-              return modParts[0] === profParts[0] && modParts[1] === profParts[1]
-            }
-            if (m.ksp_version_min && compareVersions(pv, m.ksp_version_min) < 0) return false
-            if (m.ksp_version_max && compareVersions(pv, m.ksp_version_max) > 0) return false
-            return true
-          })
-        }
-      }
-    }
-
     // Sort
     if (sortBy === 'name') {
       result = [...result].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
@@ -190,7 +154,7 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
     // 'downloads' = default DB order (no sort needed)
 
     return result
-  }, [mods, isInstalledView, installedSet, filterKspVersionMin, filterKspVersionMax, filterCompatibleOnly, sortBy, advancedFilters, searchQuery])
+  }, [mods, isInstalledView, installedSet, sortBy, advancedFilters, searchQuery])
 
   const containerWidth = parentRef.current?.clientWidth ?? 900
   const columns = Math.max(1, Math.floor((containerWidth + GAP) / (240 + GAP)))
