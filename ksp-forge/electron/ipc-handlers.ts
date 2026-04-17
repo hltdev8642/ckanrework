@@ -362,8 +362,8 @@ export function registerIpcHandlers(services: Services): void {
 
     for (const mod of installed) {
       const modRow = db.getMod(mod.identifier)
-      // Update check
-      if (modRow && modRow.latest_version && modRow.latest_version !== mod.version) {
+      // Update check (skip if installed version is unknown)
+      if (modRow && modRow.latest_version && mod.version !== 'unknown' && modRow.latest_version !== mod.version) {
         updates.push({ identifier: mod.identifier, installedVersion: mod.version, availableVersion: modRow.latest_version })
       }
       // Dependency check

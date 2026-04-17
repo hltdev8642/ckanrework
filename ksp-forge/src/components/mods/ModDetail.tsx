@@ -71,7 +71,7 @@ export function ModDetail() {
 
   const isInstalled = installedMods.some((m) => m.identifier === selectedModId)
   const installedVersion = installedMods.find((m) => m.identifier === selectedModId)?.version
-  const hasUpdate = isInstalled && mod?.latest_version && installedVersion && mod.latest_version !== installedVersion
+  const hasUpdate = isInstalled && mod?.latest_version && installedVersion && installedVersion !== 'unknown' && mod.latest_version !== installedVersion
 
   useEffect(() => {
     if (!mod) return

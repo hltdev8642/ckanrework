@@ -430,9 +430,11 @@ export class ProfileService {
         const modInfo = modEntry.module || modEntry.Module || {}
         let version = String(modInfo.version || modInfo.Version || 'unknown')
 
-        // If version is unknown, try to read it from .ckan files
+        // If version is unknown, try to read it from .ckan files in CKAN dir and GameData
         if (version === 'unknown') {
-          version = this.findCkanVersionFromFiles(kspPath, identifier) || 'unknown'
+          version = this.findVersionFromCkanDir(kspPath, identifier)
+            || this.findCkanVersionFromFiles(kspPath, identifier)
+            || 'unknown'
         }
 
         // Files can be an array of strings or an array of objects
@@ -456,6 +458,26 @@ export class ProfileService {
 
     console.log(`[profile] Found ${results.length} mods in CKAN registry`)
     return results
+  }
+
+  private findVersionFromCkanDir(kspPath: string, identifier: string): string | null {
+    // CKAN stores .ckan files for installed mods in <KSP>/CKAN/
+    const ckanDir = path.join(kspPath, 'CKAN')
+    if (!fs.existsSync(ckanDir)) return null
+
+    try {
+      const files = fs.readdirSync(ckanDir).filter(f => f.endsWith('.ckan'))
+      for (const file of files) {
+        try {
+          const content = fs.readFileSync(path.join(ckanDir, file), 'utf-8')
+          const data = JSON.parse(content)
+          if (data.identifier === identifier && data.version) {
+            return String(data.version)
+          }
+        } catch { /* skip */ }
+      }
+    } catch { /* skip */ }
+    return null
   }
 
   private findCkanVersionFromFiles(kspPath: string, identifier: string): string | null {

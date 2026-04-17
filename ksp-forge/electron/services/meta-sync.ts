@@ -8,7 +8,7 @@ import zlib from 'zlib'
 import * as tar from 'tar'
 import { URL as NodeURL } from 'url'
 import { pipeline } from 'stream/promises'
-import type { CkanMetadata, ModRow, ModVersionRow } from '../types'
+import type { CkanMetadata, ModRow, ModVersionRow, RepositoryRow } from '../types'
 import { DatabaseService } from './database'
 
 const OFFICIAL_CKAN_META_URL = 'https://github.com/KSP-CKAN/CKAN-meta.git'
@@ -180,11 +180,94 @@ export class MetaSyncService {
     }
   }
 
+  /**
+   * Scan CKAN directories for repository configurations
+   */
+  private scanCkanDirectories(): RepositoryRow[] {
+    const ckanRepos: RepositoryRow[] = []
+    const userDataDir = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming')
+    const ckanDirs = [
+      path.join(userDataDir, 'CKAN'),
+      path.join(userDataDir, 'CKAN', 'repos')
+    ]
+
+    for (const ckanDir of ckanDirs) {
+      if (!fs.existsSync(ckanDir)) continue
+
+      try {
+        const entries = fs.readdirSync(ckanDir, { withFileTypes: true })
+        for (const entry of entries) {
+          if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+
+          const filePath = path.join(ckanDir, entry.name)
+          try {
+            const content = fs.readFileSync(filePath, 'utf-8')
+            const config = JSON.parse(content)
+
+            // Check if this is a CKAN repository configuration
+            if (config.repositories && Array.isArray(config.repositories)) {
+              for (const repo of config.repositories) {
+                if (repo.uri && repo.name) {
+                  // Generate a unique ID based on the URI
+                  const id = `ckan-${Buffer.from(repo.uri).toString('base64').replace(/[^a-zA-Z0-9]/g, '').substring(0, 20)}`
+                  ckanRepos.push({
+                    id,
+                    name: repo.name,
+                    url: repo.uri,
+                    enabled: 1,
+                    priority: 10 // Lower priority than manually added repos
+                  })
+                }
+              }
+            }
+            // Also check for direct repository configuration (some CKAN versions)
+            else if (config.uri && config.name) {
+              const id = `ckan-${Buffer.from(config.uri).toString('base64').replace(/[^a-zA-Z0-9]/g, '').substring(0, 20)}`
+              ckanRepos.push({
+                id,
+                name: config.name,
+                url: config.uri,
+                enabled: 1,
+                priority: 10
+              })
+            }
+          } catch (error) {
+            console.warn(`[meta-sync] Failed to parse CKAN config file ${filePath}:`, error)
+          }
+        }
+      } catch (error) {
+        console.warn(`[meta-sync] Failed to scan CKAN directory ${ckanDir}:`, error)
+      }
+    }
+
+    return ckanRepos
+  }
+
   async sync(onProgress?: (current: number, total: number, phase: string) => void): Promise<number> {
     let repos = this.db.getRepositories().filter(r => r.enabled)
     if (repos.length === 0) {
       repos = [{ id: 'official', name: 'CKAN Official', url: OFFICIAL_CKAN_META_URL, enabled: 1, priority: 0 }]
     }
+
+    // Scan CKAN directories for additional repositories
+    const ckanRepos = this.scanCkanDirectories()
+
+    // Merge repositories, preferring manually added ones (lower priority number)
+    const allRepos = new Map<string, RepositoryRow>()
+
+    // Add manually configured repos first
+    for (const repo of repos) {
+      allRepos.set(repo.id, repo)
+    }
+
+    // Add CKAN directory repos if not already present
+    for (const repo of ckanRepos) {
+      if (!allRepos.has(repo.id)) {
+        allRepos.set(repo.id, repo)
+      }
+    }
+
+    repos = Array.from(allRepos.values()).sort((a, b) => a.priority - b.priority)
 
     onProgress?.(0, repos.length, 'downloading')
 

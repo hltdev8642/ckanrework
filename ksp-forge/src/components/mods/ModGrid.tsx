@@ -80,6 +80,7 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
   const updatesAvailableSet = useMemo(() => {
     const set = new Set<string>()
     for (const im of installedMods) {
+      if (!im.version || im.version === 'unknown') continue
       const modRow = mods.find(m => m.identifier === im.identifier)
       if (modRow && modRow.latest_version && compareVersions(modRow.latest_version, im.version) > 0) {
         set.add(im.identifier)
