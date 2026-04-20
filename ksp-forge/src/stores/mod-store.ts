@@ -1,9 +1,14 @@
 import { create } from 'zustand'
 import { api } from '../lib/ipc'
-import type { ModRow, ModVersionRow, SpaceDockCacheRow } from '../../electron/types'
+import type { CurseForgeProjectDetail, ModRow, ModVersionRow, SpaceDockCacheRow } from '../../electron/types'
+
+function isCurseForgeIdentifier(identifier: string): boolean {
+  return identifier.startsWith('curseforge:')
+}
 
 interface ModState {
   mods: ModRow[]
+  catalogMods: ModRow[]
   modCount: number
   loading: boolean
   syncing: boolean
@@ -11,13 +16,15 @@ interface ModState {
   syncProgress: number
   syncError: string | null
   spacedockCache: Map<string, SpaceDockCacheRow>
+  curseforgeDetailCache: Map<string, CurseForgeProjectDetail>
 
   kspVersions: string[]
   fetchMods: () => Promise<void>
-  searchMods: (query: string) => Promise<void>
+  searchMods: (query: string, source?: 'ckan' | 'curseforge') => Promise<void>
   fetchSpaceDockData: (identifier: string) => Promise<SpaceDockCacheRow | null>
   fetchSpaceDockBatch: (identifiers: string[]) => Promise<void>
   fetchModVersions: (identifier: string) => Promise<ModVersionRow[]>
+  fetchCurseForgeDetail: (identifier: string) => Promise<CurseForgeProjectDetail | null>
   fetchKspVersions: () => Promise<void>
   syncMeta: () => Promise<void>
   syncIfNeeded: () => Promise<void>
@@ -26,6 +33,7 @@ interface ModState {
 
 export const useModStore = create<ModState>((set, get) => ({
   mods: [],
+  catalogMods: [],
   modCount: 0,
   loading: false,
   syncing: false,
@@ -34,6 +42,7 @@ export const useModStore = create<ModState>((set, get) => ({
   syncError: null,
   kspVersions: [],
   spacedockCache: new Map(),
+  curseforgeDetailCache: new Map(),
 
   fetchMods: async () => {
     set({ loading: true })
@@ -42,17 +51,28 @@ export const useModStore = create<ModState>((set, get) => ({
         api.mods.getAll(),
         api.mods.getCount(),
       ])
-      set({ mods: mods ?? [], modCount: modCount ?? 0 })
+      const catalogMods = mods ?? []
+      set({
+        catalogMods,
+        mods: catalogMods.filter((mod) => !isCurseForgeIdentifier(mod.identifier)),
+        modCount: modCount ?? 0,
+      })
     } finally {
       set({ loading: false })
     }
   },
 
-  searchMods: async (query) => {
+  searchMods: async (query, source = 'ckan') => {
     set({ loading: true })
     try {
+      if (source === 'curseforge') {
+        const mods = await api.curseforge.search(query)
+        set({ mods: mods ?? [] })
+        return
+      }
+
       const mods = await api.mods.search(query)
-      set({ mods: mods ?? [] })
+      set({ mods: (mods ?? []).filter((mod) => !isCurseForgeIdentifier(mod.identifier)) })
     } finally {
       set({ loading: false })
     }
@@ -102,6 +122,27 @@ export const useModStore = create<ModState>((set, get) => ({
       return versions ?? []
     } catch {
       return []
+    }
+  },
+
+  fetchCurseForgeDetail: async (identifier) => {
+    const { curseforgeDetailCache } = get()
+    if (curseforgeDetailCache.has(identifier)) {
+      return curseforgeDetailCache.get(identifier) ?? null
+    }
+
+    try {
+      const detail = await api.curseforge.getDetail(identifier)
+      if (detail) {
+        set((state) => {
+          const next = new Map(state.curseforgeDetailCache)
+          next.set(identifier, detail)
+          return { curseforgeDetailCache: next }
+        })
+      }
+      return detail ?? null
+    } catch {
+      return null
     }
   },
 

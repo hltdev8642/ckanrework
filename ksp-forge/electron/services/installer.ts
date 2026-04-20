@@ -18,6 +18,34 @@ export interface InstallPlanItem {
   isDependency: boolean
 }
 
+function normalizeEntryPath(entryPath: string): string {
+  return entryPath.replace(/\\/g, '/').replace(/^\.\//, '')
+}
+
+function applyGenericInstall(entries: { entryPath: string; buffer: Buffer }[]): { relDest: string; buffer: Buffer }[] {
+  const gameDataEntries = entries
+    .map((entry) => {
+      const parts = normalizeEntryPath(entry.entryPath).split('/').filter(Boolean)
+      const gameDataIndex = parts.findIndex((part) => part.toLowerCase() === 'gamedata')
+      if (gameDataIndex === -1) return null
+      const relDest = parts.slice(gameDataIndex).join('/')
+      return relDest ? { relDest, buffer: entry.buffer } : null
+    })
+    .filter((entry): entry is { relDest: string; buffer: Buffer } => !!entry)
+
+  if (gameDataEntries.length > 0) return gameDataEntries
+
+  const roots = Array.from(new Set(entries.map((entry) => normalizeEntryPath(entry.entryPath).split('/').filter(Boolean)[0]).filter(Boolean)))
+  if (roots.length === 1) {
+    return entries.map((entry) => ({
+      relDest: `GameData/${normalizeEntryPath(entry.entryPath)}`,
+      buffer: entry.buffer,
+    }))
+  }
+
+  throw new Error('Archive does not contain a GameData directory and install layout could not be inferred safely')
+}
+
 export class InstallerService {
   private db: DatabaseService
 
@@ -195,12 +223,6 @@ export class InstallerService {
     return new Promise((resolve, reject) => {
       const installedFiles: string[] = []
 
-      // If no directives, default to installing everything to GameData
-      if (directives.length === 0) {
-        const defaultDirective: InstallDirective = { install_to: 'GameData' }
-        directives = [defaultDirective]
-      }
-
       const entries: { entryPath: string; buffer: Buffer }[] = []
 
       const stream = fs.createReadStream(zipPath).pipe(unzipper.Parse({ forceStream: true }))
@@ -224,15 +246,21 @@ export class InstallerService {
 
       stream.on('finish', () => {
         try {
-          for (const directive of directives) {
-            const matchedEntries = this.applyDirective(directive, entries)
-            for (const { relDest, buffer } of matchedEntries) {
-              const destPath = path.join(kspPath, relDest)
-              fs.mkdirSync(path.dirname(destPath), { recursive: true })
-              fs.writeFileSync(destPath, buffer)
-              installedFiles.push(relDest)
-            }
+          const targets = directives.length > 0
+            ? directives.flatMap((directive) => this.applyDirective(directive, entries))
+            : applyGenericInstall(entries)
+
+          for (const { relDest, buffer } of targets) {
+            const destPath = path.join(kspPath, relDest)
+            fs.mkdirSync(path.dirname(destPath), { recursive: true })
+            fs.writeFileSync(destPath, buffer)
+            installedFiles.push(relDest)
           }
+
+          if (installedFiles.length === 0) {
+            throw new Error('Archive did not produce any installed files')
+          }
+
           resolve(installedFiles)
         } catch (err) {
           reject(err)
@@ -250,7 +278,7 @@ export class InstallerService {
     const results: { relDest: string; buffer: Buffer }[] = []
 
     for (const entry of entries) {
-      const entryPath = entry.entryPath.replace(/\\/g, '/')
+      const entryPath = normalizeEntryPath(entry.entryPath)
 
       let matched = false
       let matchedPrefix = ''

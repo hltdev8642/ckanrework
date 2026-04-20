@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 export type ViewName = 'discover' | 'installed' | 'downloads' | 'profiles' | 'settings' | 'mod-detail' | 'audit'
+export type DiscoverSource = 'ckan' | 'curseforge'
 
 export interface AdvancedFilters {
   author: string
@@ -35,12 +36,14 @@ function saveFilters(f: FilterState) {
 interface UiState extends FilterState {
   currentView: ViewName
   previousView: ViewName | null
+  discoverSource: DiscoverSource
   selectedModId: string | null
   searchQuery: string
   discoverScrollPosition: number
   advancedFilters: AdvancedFilters
 
   setView: (view: ViewName) => void
+  setDiscoverSource: (source: DiscoverSource) => void
   setSelectedMod: (id: string | null) => void
   setSearchQuery: (query: string) => void
   setSortBy: (sort: 'name' | 'downloads' | 'updated') => void
@@ -61,6 +64,7 @@ const savedFilters = loadFilters()
 export const useUiStore = create<UiState>((set, get) => ({
   currentView: 'discover',
   previousView: null,
+  discoverSource: 'ckan',
   selectedModId: null,
   searchQuery: '',
   discoverScrollPosition: 0,
@@ -72,6 +76,8 @@ export const useUiStore = create<UiState>((set, get) => ({
       currentView: view,
       previousView: state.currentView,
     })),
+
+  setDiscoverSource: (source) => set({ discoverSource: source, searchQuery: '' }),
 
   setSelectedMod: (id) => set({ selectedModId: id }),
 

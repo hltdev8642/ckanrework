@@ -26,9 +26,9 @@ function parseQueryTokens(raw: string): { filters: Partial<AdvancedFilters>; pla
 
 export function SearchBar() {
   const {
-    searchQuery, sortBy, setSearchQuery, setSortBy,
+    currentView, discoverSource, searchQuery, sortBy, setSearchQuery, setSortBy,
     resetFilters, advancedFilters,
-    setAdvancedFilters, clearAdvancedFilters,
+    setAdvancedFilters, clearAdvancedFilters, setDiscoverSource,
   } = useUiStore()
   const { searchMods, fetchMods } = useModStore()
 
@@ -52,9 +52,36 @@ export function SearchBar() {
     setSearchQuery(value)
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      if (plainQuery.trim()) searchMods(plainQuery.trim())
-      else fetchMods()
+      if (discoverSource === 'curseforge') {
+        searchMods(plainQuery.trim(), 'curseforge')
+      } else if (plainQuery.trim()) {
+        searchMods(plainQuery.trim(), 'ckan')
+      } else {
+        fetchMods()
+      }
     }, 300)
+  }
+
+  const handleSourceChange = (source: 'ckan' | 'curseforge') => {
+    if (source === discoverSource) return
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    setDiscoverSource(source)
+
+    const trimmedQuery = localQuery.trim()
+    if (trimmedQuery) {
+      if (source === 'curseforge') {
+        searchMods(trimmedQuery, 'curseforge')
+      } else {
+        searchMods(trimmedQuery, 'ckan')
+      }
+      return
+    }
+
+    if (source === 'curseforge') {
+      searchMods('', 'curseforge')
+    } else {
+      fetchMods()
+    }
   }
 
   const activeFilterCount =
@@ -67,6 +94,31 @@ export function SearchBar() {
   return (
     <div className="border-b border-space-border bg-space-surface/50">
       <div className="flex items-center gap-3 px-4 py-3">
+        {currentView === 'discover' && (
+          <div className="flex items-center rounded-lg border border-space-border overflow-hidden flex-shrink-0">
+            <button
+              onClick={() => handleSourceChange('ckan')}
+              className={`px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+                discoverSource === 'ckan'
+                  ? 'bg-[rgba(99,102,241,0.15)] text-[#c4b5fd]'
+                  : 'bg-space-bg text-space-text-muted hover:text-white'
+              }`}
+            >
+              CKAN
+            </button>
+            <button
+              onClick={() => handleSourceChange('curseforge')}
+              className={`px-3 py-2 text-xs font-semibold transition-colors cursor-pointer border-l border-space-border ${
+                discoverSource === 'curseforge'
+                  ? 'bg-[rgba(249,115,22,0.15)] text-[rgba(251,146,60,0.95)]'
+                  : 'bg-space-bg text-space-text-muted hover:text-white'
+              }`}
+            >
+              CurseForge
+            </button>
+          </div>
+        )}
+
         {/* Search input */}
         <div className="relative flex-1">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-space-text-muted text-sm select-none">
@@ -76,7 +128,9 @@ export function SearchBar() {
             type="text"
             value={localQuery}
             onChange={(e) => handleChange(e.target.value)}
-            placeholder="Search mods... (author:name tag:parts license:MIT installed:yes)"
+            placeholder={discoverSource === 'curseforge'
+              ? 'Search CurseForge KSP mods...'
+              : 'Search mods... (author:name tag:parts license:MIT installed:yes)'}
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-space-bg border border-space-border text-space-text placeholder:text-space-text-muted text-sm focus:outline-none focus:border-space-accent/50 transition-colors"
           />
         </div>

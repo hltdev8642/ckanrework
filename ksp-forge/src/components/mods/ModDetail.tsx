@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import type { ModVersionRow, SpaceDockCacheRow } from '../../../electron/types'
+import type { CurseForgeProjectDetail, ModVersionRow, SpaceDockCacheRow } from '../../../electron/types'
 import { useModStore } from '../../stores/mod-store'
 import { useUiStore } from '../../stores/ui-store'
 import { useProfileStore } from '../../stores/profile-store'
@@ -49,13 +49,26 @@ function renderDescription(sdData: SpaceDockCacheRow | null, mod: { abstract: st
   return '<p style="color: rgba(148,163,184,0.6)">No description available.</p>'
 }
 
+function formatBytes(bytes: number | null): string {
+  if (!bytes || Number.isNaN(bytes)) return '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
 export function ModDetail() {
   const { selectedModId, goBack } = useUiStore()
-  const { mods, fetchSpaceDockData, fetchModVersions } = useModStore()
+  const { mods, fetchSpaceDockData, fetchModVersions, fetchCurseForgeDetail } = useModStore()
   const { installedMods, activeProfileId, fetchInstalledMods, uninstallMod } = useProfileStore()
-  const { resolution, showDialog, installing, progress, requestInstall, confirmInstall, cancelInstall } = useInstallStore()
+  const { resolution, showDialog, installing, progress, requestInstall, requestCurseForgeInstall, confirmInstall, cancelInstall } = useInstallStore()
 
   const [sdData, setSdData] = useState<SpaceDockCacheRow | null>(null)
+  const [curseDetail, setCurseDetail] = useState<CurseForgeProjectDetail | null>(null)
   const [versions, setVersions] = useState<ModVersionRow[]>([])
   const [activeTab, setActiveTab] = useState<Tab>('description')
   const [loadingMeta, setLoadingMeta] = useState(true)
@@ -68,6 +81,7 @@ export function ModDetail() {
     () => mods.find((m) => m.identifier === selectedModId) ?? null,
     [mods, selectedModId],
   )
+  const isCurseForge = mod?.identifier.startsWith('curseforge:') ?? false
 
   const isInstalled = installedMods.some((m) => m.identifier === selectedModId)
   const installedVersion = installedMods.find((m) => m.identifier === selectedModId)?.version
@@ -78,9 +92,20 @@ export function ModDetail() {
     setLoadingMeta(true)
     setActiveTab('description')
     setSdData(null)
+    setCurseDetail(null)
     setVersions([])
+    setScrapedImages([])
+    setLoadingImages(false)
 
     setForumDescription(null)
+
+    if (isCurseForge) {
+      fetchCurseForgeDetail(mod.identifier).then((detail) => {
+        setCurseDetail(detail)
+        setLoadingMeta(false)
+      }).catch(() => setLoadingMeta(false))
+      return
+    }
 
     Promise.all([
       mod.spacedock_id ? fetchSpaceDockData(mod.identifier) : Promise.resolve(null),
@@ -98,7 +123,7 @@ export function ModDetail() {
         }
       }).catch(() => {})
     })
-  }, [mod?.identifier])
+  }, [fetchCurseForgeDetail, fetchModVersions, fetchSpaceDockData, isCurseForge, mod?.identifier])
 
   // Parse resources
   const resources = useMemo(() => {
@@ -112,21 +137,32 @@ export function ModDetail() {
 
   const descriptionHtml = useMemo(() => {
     if (!mod) return ''
+    if (isCurseForge) {
+      if (curseDetail?.descriptionHtml) return DOMPurify.sanitize(curseDetail.descriptionHtml)
+      if (mod.abstract) return DOMPurify.sanitize(`<p>${mod.abstract}</p>`)
+      return '<p style="color: rgba(148,163,184,0.6)">No description available.</p>'
+    }
     // Prefer forum description (first post, always the most complete)
     if (forumDescription) return DOMPurify.sanitize(forumDescription)
     return renderDescription(sdData, mod)
-  }, [sdData, mod, forumDescription])
+  }, [curseDetail?.descriptionHtml, forumDescription, isCurseForge, mod, sdData])
 
   // Quick local extraction for tab count (fast, no network)
   const quickImageCount = useMemo(() => {
+    if (isCurseForge) return curseDetail?.screenshots.length ?? 0
     let count = 0
     if (sdData?.background_url) count++
     if (sdData?.description_html) count += extractImages(sdData.description_html).length
     return count
-  }, [sdData])
+  }, [curseDetail?.screenshots.length, isCurseForge, sdData])
 
   // Full scrape triggered when Screenshots tab is opened
   useEffect(() => {
+    if (isCurseForge) {
+      setScrapedImages(curseDetail?.screenshots ?? [])
+      return
+    }
+
     if (activeTab === 'screenshots' && mod && scrapedImages.length === 0 && !loadingImages) {
       setLoadingImages(true)
       window.electronAPI.images.scrape(mod.identifier).then((imgs) => {
@@ -134,7 +170,7 @@ export function ModDetail() {
         setLoadingImages(false)
       }).catch(() => setLoadingImages(false))
     }
-  }, [activeTab, mod?.identifier])
+  }, [activeTab, curseDetail?.screenshots, isCurseForge, mod?.identifier])
 
   if (!mod) {
     return (
@@ -145,7 +181,9 @@ export function ModDetail() {
   }
 
   const authorList = Array.isArray(mod.author) ? mod.author.join(', ') : mod.author
-  const bannerUrl = sdData?.background_url ?? null
+  const bannerUrl = isCurseForge
+    ? curseDetail?.screenshots?.[0] ?? resources.curseforgeImageUrl ?? null
+    : sdData?.background_url ?? null
 
   const kspVersionDisplay =
     mod.ksp_version ??
@@ -153,7 +191,7 @@ export function ModDetail() {
       ? `${mod.ksp_version_min} – ${mod.ksp_version_max}`
       : mod.ksp_version_min ?? mod.ksp_version_max ?? '—')
 
-  const downloads = sdData?.downloads ?? null
+  const downloads = isCurseForge ? curseDetail?.downloadsText ?? resources.curseforgeDownloadsText ?? null : sdData?.downloads ?? null
 
   const screenshotLabel = scrapedImages.length > 0
     ? `Screenshots (${scrapedImages.length})`
@@ -165,8 +203,16 @@ export function ModDetail() {
     { id: 'description', label: 'Description' },
     { id: 'screenshots', label: screenshotLabel },
     { id: 'changelog', label: 'Changelog' },
-    { id: 'dependencies', label: 'Dependencies' },
+    ...(!isCurseForge ? [{ id: 'dependencies' as const, label: 'Dependencies' }] : []),
   ]
+
+  const handleInstall = () => {
+    if (isCurseForge) {
+      requestCurseForgeInstall(mod)
+      return
+    }
+    requestInstall([mod.identifier])
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -287,7 +333,7 @@ export function ModDetail() {
                     loadingImages ? (
                       <div className="py-10 text-center">
                         <p className="text-[rgba(99,102,241,0.8)] animate-pulse">
-                          Scanning homepage, GitHub, SpaceDock for images...
+                          {isCurseForge ? 'Loading screenshots...' : 'Scanning homepage, GitHub, SpaceDock for images...'}
                         </p>
                       </div>
                     ) : scrapedImages.length === 0 ? (
@@ -305,7 +351,30 @@ export function ModDetail() {
 
                   {activeTab === 'changelog' && (
                     <div className="flex flex-col gap-3">
-                      {versions.length === 0 ? (
+                      {isCurseForge ? (
+                        curseDetail?.latestFile ? (
+                          <div
+                            className="rounded-lg px-4 py-3 bg-[rgba(255,255,255,0.03)] border border-[rgba(249,115,22,0.18)]"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-sm font-semibold text-white">
+                                {curseDetail.latestFile.displayName}
+                              </span>
+                              <span className="text-xs text-[rgba(251,146,60,0.95)] bg-[rgba(249,115,22,0.12)] px-2 py-0.5 rounded">
+                                {curseDetail.latestFile.gameVersions.join(', ') || 'KSP'}
+                              </span>
+                            </div>
+                            <div className="mt-2 text-xs text-[rgba(148,163,184,0.75)] flex flex-wrap gap-3">
+                              <span>Uploaded {formatDate(curseDetail.latestFile.uploadedAt)}</span>
+                              <span>{formatBytes(curseDetail.latestFile.fileLength)}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[rgba(148,163,184,0.6)] text-sm">
+                            No release information available.
+                          </p>
+                        )
+                      ) : versions.length === 0 ? (
                         <p className="text-[rgba(148,163,184,0.6)] text-sm">
                           No changelog available.
                         </p>
@@ -358,7 +427,7 @@ export function ModDetail() {
                 <>
                   {hasUpdate && (
                     <button
-                      onClick={() => requestInstall([mod.identifier])}
+                      onClick={handleInstall}
                       disabled={installing}
                       className="
                         w-full py-2.5 rounded-lg text-sm font-semibold
@@ -385,7 +454,7 @@ export function ModDetail() {
               ) : (
                 <button
                   disabled={installing || !activeProfileId}
-                  onClick={() => requestInstall([mod.identifier])}
+                  onClick={handleInstall}
                   className={`
                     w-full py-2.5 rounded-lg text-sm font-semibold
                     border transition-colors
@@ -408,12 +477,15 @@ export function ModDetail() {
             <div className="rounded-xl bg-[rgba(255,255,255,0.03)] border border-[rgba(99,102,241,0.1)] p-4 flex flex-col gap-3">
               <MetaRow label="Version" value={mod.latest_version} />
               <MetaRow label="KSP Version" value={kspVersionDisplay} />
+              {isCurseForge && curseDetail?.latestFile?.fileLength != null && (
+                <MetaRow label="File Size" value={formatBytes(curseDetail.latestFile.fileLength)} />
+              )}
               <MetaRow
                 label="License"
                 value={Array.isArray(mod.license) ? mod.license.join(', ') : mod.license}
               />
               {downloads != null && (
-                <MetaRow label="Downloads" value={formatDownloads(downloads)} />
+                <MetaRow label="Downloads" value={typeof downloads === 'number' ? formatDownloads(downloads) : downloads} />
               )}
               <MetaRow label="Author" value={authorList} />
               {mod.release_date && (
@@ -422,11 +494,17 @@ export function ModDetail() {
             </div>
 
             {/* Links */}
-            {(resources.homepage || resources.spacedock || resources.repository || resources.bugtracker) && (
+            {(resources.homepage || resources.spacedock || resources.repository || resources.bugtracker || curseDetail?.projectUrl || curseDetail?.filesUrl) && (
               <div className="rounded-xl bg-[rgba(255,255,255,0.03)] border border-[rgba(99,102,241,0.1)] p-4 flex flex-col gap-2">
                 <p className="text-xs font-semibold text-[rgba(148,163,184,0.7)] uppercase tracking-wider mb-1">
                   Links
                 </p>
+                {curseDetail?.projectUrl && (
+                  <LinkItem href={curseDetail.projectUrl} label="CurseForge Project" />
+                )}
+                {curseDetail?.filesUrl && (
+                  <LinkItem href={curseDetail.filesUrl} label="Files" />
+                )}
                 {resources.homepage && (
                   <LinkItem href={resources.homepage} label="Homepage" />
                 )}

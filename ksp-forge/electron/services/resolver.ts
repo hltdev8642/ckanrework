@@ -1,4 +1,5 @@
 import type { ModVersionRow, Relationship } from '../types'
+import type { CurseForgeInstallCandidate } from '../types'
 import type { DatabaseService } from './database'
 
 export interface ResolvedMod {
@@ -10,6 +11,8 @@ export interface ResolvedMod {
   download_hash: string | null
   install_directives: string
   isDependency: boolean
+  source?: 'ckan' | 'curseforge'
+  metadata?: CurseForgeInstallCandidate
 }
 
 export interface ResolutionResult {

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { CurseForgeInstallCandidate, CurseForgeProjectDetail, ModRow } from './types'
 
 const api = {
   mods: {
@@ -8,6 +9,11 @@ const api = {
     getVersions: (identifier: string) => ipcRenderer.invoke('mods:getVersions', identifier),
     getCount: () => ipcRenderer.invoke('mods:getCount'),
     kspVersions: () => ipcRenderer.invoke('mods:kspVersions') as Promise<string[]>,
+  },
+  curseforge: {
+    search: (query: string) => ipcRenderer.invoke('curseforge:search', query) as Promise<ModRow[]>,
+    getDetail: (identifier: string) => ipcRenderer.invoke('curseforge:getDetail', identifier) as Promise<CurseForgeProjectDetail>,
+    prepareInstall: (mod: ModRow) => ipcRenderer.invoke('curseforge:prepareInstall', mod) as Promise<CurseForgeInstallCandidate>,
   },
   spacedock: {
     fetch: (identifier: string) => ipcRenderer.invoke('spacedock:fetch', identifier),
@@ -70,6 +76,10 @@ const api = {
       ipcRenderer.on('meta:sync-progress', handler)
       return () => ipcRenderer.removeListener('meta:sync-progress', handler)
     },
+  },
+  settings: {
+    get: (key: string) => ipcRenderer.invoke('settings:get', key) as Promise<string | null>,
+    set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value) as Promise<{ success: boolean }>,
   },
   dialog: {
     selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),

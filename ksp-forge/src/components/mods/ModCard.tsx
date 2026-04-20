@@ -13,7 +13,7 @@ interface ModCardProps {
   isInstalled: boolean
   incompatible?: boolean
   hasUpdate?: boolean
-  onInstall: (identifier: string) => void
+  onInstall: (mod: ModRow) => void
   onOpenDetail?: (identifier: string) => void
   onUninstall?: () => void
 }
@@ -22,6 +22,8 @@ export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, h
   const { openModDetail } = useUiStore()
   const handleOpenDetail = onOpenDetail ?? openModDetail
   const { spacedockCache } = useModStore()
+  const isCurseForge = mod.identifier.startsWith('curseforge:')
+  const resources = mod.resources ? JSON.parse(mod.resources) as Record<string, string> : {}
 
   const sdData = spacedockCache.get(mod.identifier) ?? null
   const [cachedImageUrl, setCachedImageUrl] = useState<string | null>(
@@ -35,6 +37,13 @@ export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, h
     }
 
     let cancelled = false
+
+    if (isCurseForge) {
+      const imageUrl = resources.curseforgeImageUrl || null
+      imageUrlCache.set(mod.identifier, imageUrl)
+      setCachedImageUrl(imageUrl)
+      return
+    }
 
     // Delay before firing IPC: cards that unmount quickly (fast scroll) won't
     // trigger a forum browser scrape, preventing queue buildup and freezes.
@@ -51,7 +60,6 @@ export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, h
         })
       } else {
         // No SpaceDock banner — try first forum image if mod has a forum link
-        const resources = mod.resources ? JSON.parse(mod.resources) : {}
         if (resources.homepage?.includes('forum.kerbalspaceprogram.com')) {
           api.images.firstForumImage(mod.identifier).then((url) => {
             if (!cancelled && url) {
@@ -68,8 +76,8 @@ export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, h
 
   const handleInstall = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
-    onInstall(mod.identifier)
-  }, [mod.identifier, onInstall])
+    onInstall(mod)
+  }, [mod, onInstall])
 
   const handleUninstall = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
@@ -77,7 +85,7 @@ export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, h
   }, [onUninstall])
 
   const bannerUrl = cachedImageUrl ?? sdData?.background_url ?? null
-  const downloads = sdData?.downloads ?? null
+  const downloads = isCurseForge ? resources.curseforgeDownloadsText ?? null : sdData?.downloads ?? null
 
   return (
     <div
@@ -115,7 +123,7 @@ export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, h
           <div className="absolute top-2 right-2 flex items-center gap-1">
             {hasUpdate && (
               <span
-                onClick={(e) => { e.stopPropagation(); onInstall(mod.identifier) }}
+                onClick={(e) => { e.stopPropagation(); onInstall(mod) }}
                 className="text-white text-[10px] font-semibold px-2 py-0.5 rounded-full cursor-pointer bg-[rgba(59,130,246,0.9)] hover:bg-blue-500"
               >
                 ↑ Update
@@ -164,7 +172,7 @@ export const ModCard = memo(function ModCard({ mod, isInstalled, incompatible, h
           <div className="flex items-center gap-2 flex-shrink-0">
             {downloads != null && (
               <span className="text-[10px] text-[rgba(148,163,184,0.6)]">
-                ↓ {formatDownloads(downloads)}
+                ↓ {typeof downloads === 'number' ? formatDownloads(downloads) : downloads}
               </span>
             )}
             <span className="text-[10px] text-[rgba(99,102,241,0.7)]">

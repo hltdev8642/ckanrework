@@ -1,6 +1,6 @@
 import { ipcMain, dialog, BrowserWindow, shell } from 'electron'
 import fs from 'fs'
-import type { SpaceDockCacheRow } from './types'
+import type { CurseForgeInstallCandidate, SpaceDockCacheRow } from './types'
 import type { ImageScraperService } from './services/image-scraper'
 import type { DatabaseService } from './services/database'
 import type { MetaSyncService } from './services/meta-sync'
@@ -9,6 +9,7 @@ import type { ResolverService } from './services/resolver'
 import type { InstallerService } from './services/installer'
 import type { ProfileService } from './services/profile'
 import type { ModCacheService } from './services/mod-cache'
+import type { CurseForgeService } from './services/curseforge'
 import { getLogger } from './services/logger'
 import os from 'os'
 import path from 'path'
@@ -22,10 +23,11 @@ interface Services {
   profile: ProfileService
   imageScraper: ImageScraperService
   modCache: ModCacheService
+  curseForge: CurseForgeService
 }
 
 export function registerIpcHandlers(services: Services): void {
-  const { db, metaSync, spaceDock, resolver, installer, profile, imageScraper, modCache } = services
+  const { db, metaSync, spaceDock, resolver, installer, profile, imageScraper, modCache, curseForge } = services
   const log = getLogger()
 
   // --- Mods ---
@@ -51,6 +53,27 @@ export function registerIpcHandlers(services: Services): void {
 
   ipcMain.handle('mods:kspVersions', () => {
     return db.getDistinctKspVersions()
+  })
+
+  ipcMain.handle('curseforge:search', async (_event, query: string) => {
+    return curseForge.searchMods(query)
+  })
+
+  ipcMain.handle('curseforge:getDetail', async (_event, identifier: string) => {
+    return curseForge.getProjectDetail(identifier)
+  })
+
+  ipcMain.handle('curseforge:prepareInstall', async (_event, mod: any) => {
+    return curseForge.prepareInstall(mod)
+  })
+
+  ipcMain.handle('settings:get', (_event, key: string) => {
+    return db.getSetting(key)
+  })
+
+  ipcMain.handle('settings:set', (_event, key: string, value: string) => {
+    db.setSetting(key, value)
+    return { success: true }
   })
 
   // --- SpaceDock ---
@@ -141,6 +164,51 @@ export function registerIpcHandlers(services: Services): void {
       })
       worker.on('error', reject)
     })
+
+    if (resolvedMod.source === 'curseforge' && resolvedMod.metadata) {
+      const metadata = resolvedMod.metadata as CurseForgeInstallCandidate
+      db.upsertMod({
+        identifier: metadata.identifier,
+        name: metadata.name,
+        abstract: metadata.abstract,
+        author: metadata.author,
+        license: metadata.license,
+        latest_version: metadata.version,
+        ksp_version: metadata.kspVersion,
+        ksp_version_min: null,
+        ksp_version_max: null,
+        download_url: metadata.downloadUrl,
+        download_size: metadata.downloadSize,
+        spacedock_id: null,
+        tags: metadata.tags.length > 0 ? JSON.stringify(metadata.tags) : null,
+        resources: JSON.stringify({
+          source: 'curseforge',
+          homepage: metadata.projectUrl,
+          curseforgeProjectUrl: metadata.projectUrl,
+          curseforgeImageUrl: metadata.imageUrl,
+          curseforgeDescriptionHtml: metadata.descriptionHtml,
+          ...metadata.links,
+        }),
+        release_date: metadata.releaseDate,
+        updated_at: Date.now(),
+      })
+      db.upsertModVersion({
+        identifier: metadata.identifier,
+        version: metadata.version,
+        ksp_version: metadata.kspVersion,
+        ksp_version_min: null,
+        ksp_version_max: null,
+        download_url: metadata.downloadUrl,
+        download_hash: null,
+        download_size: metadata.downloadSize,
+        depends: null,
+        recommends: null,
+        suggests: null,
+        conflicts: null,
+        provides: null,
+        install_directives: '[]',
+      })
+    }
 
     // Track in DB (main thread, fast)
     db.addInstalledMod({

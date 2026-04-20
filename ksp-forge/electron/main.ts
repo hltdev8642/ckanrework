@@ -10,6 +10,7 @@ import { InstallerService } from './services/installer'
 import { ProfileService } from './services/profile'
 import { ImageScraperService } from './services/image-scraper'
 import { ModCacheService } from './services/mod-cache'
+import { CurseForgeService } from './services/curseforge'
 import { registerIpcHandlers } from './ipc-handlers'
 
 const logger = initLogger(join(app.getPath('userData'), 'logs'))
@@ -95,9 +96,10 @@ app.whenReady().then(() => {
   const profile = new ProfileService(db)
   const imageScraper = new ImageScraperService(db, join(userData, 'scraper-cache'))
   const modCache = new ModCacheService(join(userData, 'mod-cache'))
+  const curseForge = new CurseForgeService(db)
 
   logger.info('Registering IPC handlers...')
-  registerIpcHandlers({ db, metaSync, spaceDock, resolver, installer, profile, imageScraper, modCache })
+  registerIpcHandlers({ db, metaSync, spaceDock, resolver, installer, profile, imageScraper, modCache, curseForge })
 
   logger.info('Creating main window...')
   createWindow()

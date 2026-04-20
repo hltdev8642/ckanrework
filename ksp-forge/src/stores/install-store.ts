@@ -3,6 +3,7 @@ import { api } from '../lib/ipc'
 import { useProfileStore } from './profile-store'
 import { useUiStore } from './ui-store'
 import type { ResolutionResult, ResolvedMod } from '../../electron/services/resolver'
+import type { CurseForgeInstallCandidate, ModRow } from '../../electron/types'
 
 export interface InstallProgress {
   active: boolean
@@ -52,8 +53,10 @@ interface InstallState {
   _processing: boolean
   history: InstallHistoryEntry[]
   pendingRecovery: ResolvedMod[][] | null
+  pendingCurseForgeInstall: CurseForgeInstallCandidate | null
 
   requestInstall: (identifiers: string[]) => Promise<void>
+  requestCurseForgeInstall: (mod: ModRow) => Promise<void>
   confirmInstall: () => Promise<void>
   cancelInstall: () => void
   checkRecovery: () => void
@@ -70,6 +73,7 @@ export const useInstallStore = create<InstallState>((set, get) => ({
   _processing: false,
   history: [],
   pendingRecovery: null,
+  pendingCurseForgeInstall: null,
 
   requestInstall: async (identifiers: string[]) => {
     const profile = useProfileStore.getState().getActiveProfile()
@@ -87,11 +91,40 @@ export const useInstallStore = create<InstallState>((set, get) => ({
     }
   },
 
+  requestCurseForgeInstall: async (mod) => {
+    try {
+      const candidate = await api.curseforge.prepareInstall(mod)
+      const resolution: ResolutionResult = {
+        success: true,
+        conflicts: [],
+        missing: [],
+        warnings: [],
+        toInstall: [
+          {
+            identifier: candidate.identifier,
+            version: candidate.version,
+            ksp_version: candidate.kspVersion,
+            download_url: candidate.downloadUrl,
+            download_size: candidate.downloadSize,
+            download_hash: null,
+            install_directives: '[]',
+            isDependency: false,
+            source: 'curseforge',
+            metadata: candidate,
+          } as ResolvedMod,
+        ],
+      }
+      set({ resolution, showDialog: true, pendingCurseForgeInstall: candidate })
+    } catch (err) {
+      console.error('CurseForge install preparation failed:', err)
+    }
+  },
+
   confirmInstall: async () => {
     const { resolution, _queue } = get()
     if (!resolution) return
 
-    set({ showDialog: false })
+    set({ showDialog: false, pendingCurseForgeInstall: null })
 
     // Add to queue
     const newQueue = [..._queue, resolution.toInstall]
@@ -103,7 +136,7 @@ export const useInstallStore = create<InstallState>((set, get) => ({
   },
 
   cancelInstall: () => {
-    set({ showDialog: false, resolution: null })
+    set({ showDialog: false, resolution: null, pendingCurseForgeInstall: null })
   },
 
   checkRecovery: () => {

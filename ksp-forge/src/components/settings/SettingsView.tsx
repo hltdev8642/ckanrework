@@ -28,6 +28,8 @@ export function SettingsView() {
   const [newRepoUrl, setNewRepoUrl] = useState('')
   const [addingRepo, setAddingRepo] = useState(false)
   const [rescanning, setRescanning] = useState(false)
+  const [curseForgeApiKey, setCurseForgeApiKey] = useState('')
+  const [savingApiKey, setSavingApiKey] = useState(false)
 
   const loadRepos = async () => {
     const r = await api.repos.getAll()
@@ -37,6 +39,7 @@ export function SettingsView() {
   useEffect(() => {
     api.meta.getLastSync().then((ts: number | null) => setLastSync(ts))
     api.modCache.getSize().then((size: number) => setCacheSize(size))
+    api.settings.get('curseforgeApiKey').then((value) => setCurseForgeApiKey(value ?? ''))
     loadRepos()
   }, [])
 
@@ -83,6 +86,15 @@ export function SettingsView() {
     setNewRepoUrl('')
     setAddingRepo(false)
     await loadRepos()
+  }
+
+  const handleSaveCurseForgeApiKey = async () => {
+    setSavingApiKey(true)
+    try {
+      await api.settings.set('curseforgeApiKey', curseForgeApiKey.trim())
+    } finally {
+      setSavingApiKey(false)
+    }
   }
 
   const handleToggleRepo = async (repo: RepoRow) => {
@@ -201,6 +213,41 @@ export function SettingsView() {
                 Sync error: {syncError}
               </p>
             )}
+          </div>
+        </section>
+
+        {/* CurseForge API section */}
+        <section className="flex flex-col gap-4">
+          <div className="flex items-center gap-2 pb-2 border-b border-[rgba(99,102,241,0.12)]">
+            <span className="text-base">🔑</span>
+            <h3 className="text-base font-semibold text-white">CurseForge API</h3>
+          </div>
+
+          <div className="rounded-xl bg-[rgba(255,255,255,0.03)] border border-[rgba(99,102,241,0.12)] p-5 flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm text-white font-medium">CurseForge API key</p>
+                  <p className="text-xs text-[rgba(148,163,184,0.6)] mt-0.5">
+                    Paste your CurseForge for Studios API key here to enable official REST API access.
+                  </p>
+                </div>
+              </div>
+              <textarea
+                rows={3}
+                value={curseForgeApiKey}
+                onChange={e => setCurseForgeApiKey(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg text-sm text-white bg-[rgba(255,255,255,0.05)] border border-[rgba(99,102,241,0.2)] focus:border-[rgba(99,102,241,0.5)] focus:outline-none resize-none"
+                placeholder="Enter CurseForge API key"
+              />
+              <button
+                onClick={handleSaveCurseForgeApiKey}
+                disabled={savingApiKey}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${savingApiKey ? 'bg-[rgba(99,102,241,0.2)] text-[rgba(148,163,184,0.4)] cursor-not-allowed border border-[rgba(99,102,241,0.15)]' : 'bg-[rgba(99,102,241,0.9)] hover:bg-[rgba(99,102,241,1)] text-white border border-[rgba(99,102,241,0.4)]'}`}
+              >
+                {savingApiKey ? 'Saving...' : 'Save API Key'}
+              </button>
+            </div>
           </div>
         </section>
 

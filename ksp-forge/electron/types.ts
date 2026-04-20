@@ -116,3 +116,57 @@ export interface RepositoryRow {
   enabled: number   // 0 | 1
   priority: number
 }
+
+export interface CurseForgeFileInfo {
+  fileId: number
+  fileName: string
+  version: string
+  uploadedAt: string | null
+  fileSize: number | null
+  fileSizeText: string | null
+  supportedVersions: string[]
+  changelogHtml: string | null
+  downloadUrl: string
+}
+
+export interface CurseForgeProjectDetail {
+  identifier: string
+  slug: string
+  projectUrl: string
+  author: string
+  imageUrl: string | null
+  descriptionHtml: string
+  screenshots: string[]
+  links: {
+    homepage?: string
+    repository?: string
+    bugtracker?: string
+    issues?: string
+    files?: string
+  }
+  latestFile: CurseForgeFileInfo | null
+}
+
+export interface CurseForgeInstallCandidate {
+  identifier: string
+  name: string
+  abstract: string | null
+  author: string
+  license: string
+  version: string
+  kspVersion: string | null
+  downloadUrl: string
+  downloadSize: number | null
+  tags: string[]
+  releaseDate: string | null
+  projectUrl: string
+  imageUrl: string | null
+  descriptionHtml: string
+  links: {
+    homepage?: string
+    repository?: string
+    bugtracker?: string
+    issues?: string
+    files?: string
+  }
+}

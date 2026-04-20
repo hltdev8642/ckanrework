@@ -259,6 +259,10 @@ export class DatabaseService {
       .join(' ')
     const sanitized = stripped.replace(/['"*]/g, ' ').trim()
     if (!sanitized) return this.getAllMods()
+
+    const tokens = sanitized.split(/\s+/).filter(Boolean)
+    const ftsQuery = tokens.map((token) => `${token}*`).join(' AND ')
+
     return this.db
       .prepare(
         `SELECT mods.* FROM mods
@@ -266,7 +270,7 @@ export class DatabaseService {
          WHERE mods_fts MATCH @query
          ORDER BY rank`
       )
-      .all({ query: sanitized + '*' }) as ModRow[]
+      .all({ query: ftsQuery }) as ModRow[]
   }
 
   upsertModVersion(version: ModVersionRow): void {

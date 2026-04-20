@@ -7,6 +7,7 @@ import { SearchBar } from '../layout/SearchBar'
 import { ModCard } from './ModCard'
 import { InstallDialog } from '../install/InstallDialog'
 import { useInstallStore } from '../../stores/install-store'
+import type { ModRow } from '../../../electron/types'
 
 interface ModGridProps {
   filter?: 'all' | 'installed'
@@ -43,15 +44,19 @@ function getModKspVersion(mod: { ksp_version: string | null; ksp_version_min: st
 export function ModGrid({ filter = 'all' }: ModGridProps) {
   const { mods, loading, fetchSpaceDockBatch, spacedockCache } = useModStore()
   const { installedMods, activeProfileId, fetchInstalledMods, uninstallMod } = useProfileStore()
-  const { currentView, discoverScrollPosition, setDiscoverScrollPosition, openModDetail, sortBy, advancedFilters, searchQuery } = useUiStore()
+  const { currentView, discoverSource, discoverScrollPosition, setDiscoverScrollPosition, openModDetail, sortBy, advancedFilters, searchQuery } = useUiStore()
   const { getActiveProfile } = useProfileStore()
-  const { resolution, showDialog, installing, progress, confirmInstall, cancelInstall, requestInstall } = useInstallStore()
+  const { resolution, showDialog, confirmInstall, cancelInstall, requestInstall, requestCurseForgeInstall } = useInstallStore()
   const parentRef = useRef<HTMLDivElement>(null)
   const scrollRestoredRef = useRef(false)
 
-  const handleCardInstall = useCallback((identifier: string) => {
-    requestInstall([identifier])
-  }, [requestInstall])
+  const handleCardInstall = useCallback((mod: ModRow) => {
+    if (mod.identifier.startsWith('curseforge:')) {
+      requestCurseForgeInstall(mod)
+      return
+    }
+    requestInstall([mod.identifier])
+  }, [requestCurseForgeInstall, requestInstall])
 
   // Save scroll position before navigating to mod detail
   const handleOpenModDetail = useCallback((id: string) => {
@@ -199,7 +204,7 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
     }, 150) // debounce scroll
   }, [visibleItems.length > 0 ? visibleItems[0]?.index : -1, columns])
 
-  const title = isInstalledView ? 'Installed Mods' : 'Discover Mods'
+  const title = isInstalledView ? 'Installed Mods' : discoverSource === 'curseforge' ? 'Discover CurseForge Mods' : 'Discover Mods'
 
   return (
     <div className="flex flex-col h-full">
@@ -228,7 +233,11 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
                 {isInstalledView ? 'No mods installed yet' : 'No mods found'}
               </p>
               <p className="text-[rgba(100,116,139,0.7)] text-sm mt-1">
-                {isInstalledView ? 'Browse the Discover tab to find and install mods' : 'Try adjusting your search or filters'}
+                {isInstalledView
+                  ? 'Browse the Discover tab to find and install mods'
+                  : discoverSource === 'curseforge'
+                    ? 'Try a broader CurseForge search term'
+                    : 'Try adjusting your search or filters'}
               </p>
             </div>
           </div>
