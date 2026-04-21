@@ -176,6 +176,10 @@ pnpm build:linux  # Linux
 
 ---
 
+## Release Notes
+
+See [CHANGELOG.md](CHANGELOG.md) for the latest release details.
+
 ## Contributing
 
 Contributions are welcome! Feel free to open issues and pull requests.
