@@ -14,6 +14,7 @@ const api = {
     search: (query: string) => ipcRenderer.invoke('curseforge:search', query) as Promise<ModRow[]>,
     getDetail: (identifier: string) => ipcRenderer.invoke('curseforge:getDetail', identifier) as Promise<CurseForgeProjectDetail>,
     prepareInstall: (mod: ModRow) => ipcRenderer.invoke('curseforge:prepareInstall', mod) as Promise<CurseForgeInstallCandidate>,
+    syncAll: () => ipcRenderer.invoke('curseforge:syncAll') as Promise<{ count: number }>,
   },
   spacedock: {
     fetch: (identifier: string) => ipcRenderer.invoke('spacedock:fetch', identifier),

@@ -67,6 +67,10 @@ export function registerIpcHandlers(services: Services): void {
     return curseForge.prepareInstall(mod)
   })
 
+  ipcMain.handle('curseforge:syncAll', async () => {
+    return curseForge.syncAllMods()
+  })
+
   ipcMain.handle('settings:get', (_event, key: string) => {
     return db.getSetting(key)
   })

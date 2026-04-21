@@ -6,6 +6,15 @@ const BASE_URL = 'https://www.curseforge.com'
 const API_BASE_URL = 'https://api.curseforge.com'
 const SEARCH_URL = `${BASE_URL}/kerbal/search?class=ksp-mods&page=1&pageSize=20&sortBy=relevancy`
 
+interface CurseForgeSearchResponse {
+  data?: Array<any>
+  pagination?: {
+    index: number
+    pageSize: number
+    totalCount: number
+  }
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -55,8 +64,58 @@ function buildDirectDownloadUrl(fileId: number, fileName: string): string {
 
 export class CurseForgeService {
   private gameIdCache: number | null | undefined = undefined
+  private searchCache = new Map<string, Promise<ModRow[]> | ModRow[]>()
+  private detailCache = new Map<string, Promise<CurseForgeProjectDetail> | CurseForgeProjectDetail>()
 
   constructor(private db: DatabaseService) {}
+
+  private normalizeSearchKey(query: string): string {
+    return query.trim().toLowerCase()
+  }
+
+  private normalizeIdentifierKey(identifier: string): string {
+    return identifier.trim().toLowerCase()
+  }
+
+  private async resolveCachedSearch(query: string, fetchFn: () => Promise<ModRow[]>): Promise<ModRow[]> {
+    const key = this.normalizeSearchKey(query)
+    const existing = this.searchCache.get(key)
+    if (existing) {
+      return existing instanceof Promise ? await existing : existing
+    }
+
+    const promise = fetchFn()
+    this.searchCache.set(key, promise)
+
+    try {
+      const result = await promise
+      this.searchCache.set(key, result)
+      return result
+    } catch (error) {
+      this.searchCache.delete(key)
+      throw error
+    }
+  }
+
+  private async resolveCachedDetail(identifier: string, fetchFn: () => Promise<CurseForgeProjectDetail>): Promise<CurseForgeProjectDetail> {
+    const key = this.normalizeIdentifierKey(identifier)
+    const existing = this.detailCache.get(key)
+    if (existing) {
+      return existing instanceof Promise ? await existing : existing
+    }
+
+    const promise = fetchFn()
+    this.detailCache.set(key, promise)
+
+    try {
+      const result = await promise
+      this.detailCache.set(key, result)
+      return result
+    } catch (error) {
+      this.detailCache.delete(key)
+      throw error
+    }
+  }
 
   private getCurseForgeApiKey(): string | null {
     return this.db.getSetting('curseforgeApiKey')?.trim() || null
@@ -110,26 +169,63 @@ export class CurseForgeService {
     return response.json() as Promise<T>
   }
 
+  private static readonly SEARCH_PAGE_SIZE = 50
+
   private async searchModsViaApi(query: string): Promise<ModRow[]> {
     const gameId = await this.getCurseForgeGameId()
     if (!gameId) {
       throw new Error('CurseForge game ID could not be resolved')
     }
 
-    const params: Record<string, string | number | boolean> = {
-      gameId,
-      pageSize: 50,
-    }
-    if (query.trim()) {
-      params.searchFilter = query.trim()
+    const results: ModRow[] = []
+    const seenSlugs = new Set<string>()
+    const searchFilter = query.trim()
+    let page = 0
+    let totalCount: number | null = null
+
+    while (true) {
+      const params: Record<string, string | number | boolean> = {
+        gameId,
+        index: page * CurseForgeService.SEARCH_PAGE_SIZE,
+        pageSize: CurseForgeService.SEARCH_PAGE_SIZE,
+      }
+      if (searchFilter) {
+        params.searchFilter = searchFilter
+      }
+
+      const response = await this.callApi<CurseForgeSearchResponse>('/v1/mods/search', params)
+      const mods = response.data ?? []
+
+      if (mods.length === 0) {
+        break
+      }
+
+      let addedCount = 0
+      for (const mod of mods) {
+        const slug = String(mod.slug ?? '')
+        if (!slug || seenSlugs.has(slug)) {
+          continue
+        }
+        seenSlugs.add(slug)
+        results.push(this.mapApiModToModRow(mod))
+        addedCount += 1
+      }
+
+      if (response.pagination) {
+        totalCount = response.pagination.totalCount
+      }
+
+      if (mods.length < CurseForgeService.SEARCH_PAGE_SIZE || addedCount === 0) {
+        break
+      }
+      if (totalCount !== null && (page + 1) * CurseForgeService.SEARCH_PAGE_SIZE >= totalCount) {
+        break
+      }
+
+      page += 1
     }
 
-    const response = await this.callApi<{ data: Array<any> }>('/v1/mods/search', params)
-    if (!response.data) {
-      return []
-    }
-
-    return response.data.map((mod) => this.mapApiModToModRow(mod))
+    return results
   }
 
   private mapApiModToModRow(mod: any): ModRow {
@@ -221,33 +317,40 @@ export class CurseForgeService {
     return typeof response.data === 'string' ? response.data : ''
   }
 
+  async syncAllMods(): Promise<{ count: number }> {
+    const mods = await this.searchMods('')
+    return { count: mods.length }
+  }
+
   async searchMods(query: string): Promise<ModRow[]> {
-    const apiResults = await this.searchModsViaApi(query).catch(() => null)
-    if (apiResults !== null) {
-      return apiResults
-    }
+    return this.resolveCachedSearch(query, async () => {
+      const apiResults = await this.searchModsViaApi(query).catch(() => null)
+      if (apiResults !== null) {
+        return apiResults
+      }
 
-    const url = query.trim()
-      ? `${SEARCH_URL}&search=${encodeURIComponent(query.trim())}`
-      : SEARCH_URL
+      const url = query.trim()
+        ? `${SEARCH_URL}&search=${encodeURIComponent(query.trim())}`
+        : SEARCH_URL
 
-    const results = await this.withPage<Array<{
-      slug: string
-      projectUrl: string
-      name: string
-      author: string
-      summary: string
-      imageUrl: string | null
-      downloads: string
-      latestRelease: string
-      createdAt: string
-      fileSizeText: string
-      gameVersion: string
-      fileId: number | null
-      tags: string[]
-    }>>(url, this.searchExtractor())
+      const results = await this.withPage<Array<{
+        slug: string
+        projectUrl: string
+        name: string
+        author: string
+        summary: string
+        imageUrl: string | null
+        downloads: string
+        latestRelease: string
+        createdAt: string
+        fileSizeText: string
+        gameVersion: string
+        fileId: number | null
+        tags: string[]
+      }>>(url, this.searchExtractor())
 
-    return results.map((result) => this.mapSearchResultToMod(result))
+      return results.map((result) => this.mapSearchResultToMod(result))
+    })
   }
 
   async getProjectDetail(identifier: string): Promise<CurseForgeProjectDetail> {
@@ -487,94 +590,6 @@ export class CurseForgeService {
       }),
       release_date: parseTextDate(result.latestRelease),
       updated_at: Date.now(),
-    }
-  }
-
-  async searchMods(query: string): Promise<ModRow[]> {
-    const apiResults = await this.searchModsViaApi(query).catch(() => null)
-    if (apiResults !== null) {
-      return apiResults
-    }
-
-    const url = query.trim()
-      ? `${SEARCH_URL}&search=${encodeURIComponent(query.trim())}`
-      : SEARCH_URL
-
-    const results = await this.withPage<Array<{
-      slug: string
-      projectUrl: string
-      name: string
-      author: string
-      summary: string
-      imageUrl: string | null
-      downloads: string
-      latestRelease: string
-      createdAt: string
-      fileSizeText: string
-      gameVersion: string
-      fileId: number | null
-      tags: string[]
-    }>>(url, this.searchExtractor())
-
-    return results.map((result) => this.mapSearchResultToMod(result))
-  }
-
-  async getProjectDetail(identifier: string): Promise<CurseForgeProjectDetail> {
-    const apiDetail = await this.getProjectDetailViaApi(identifier).catch(() => null)
-    if (apiDetail) return apiDetail
-
-    const slug = parseIdentifierSlug(identifier)
-    const projectUrl = `${BASE_URL}/kerbal/ksp-mods/${slug}`
-    const project = await this.withPage<{
-      title: string
-      author: string
-      imageUrl: string | null
-      descriptionHtml: string
-      filesHref: string | null
-      firstFileHref: string | null
-      screenshots: string[]
-      externalLinks: string[]
-    }>(projectUrl, this.projectDetailExtractor())
-
-    let latestFile: CurseForgeFileInfo | null = null
-    const fileHref = absoluteUrl(project.firstFileHref)
-    if (fileHref) {
-      const file = await this.withPage<{
-        heading: string
-        fileName: string
-        supportedVersions: string[]
-        uploadedAt: string
-        fileSizeText: string
-        changelogHtml: string | null
-      }>(fileHref, this.fileDetailExtractor())
-      const fileId = Number(fileHref.match(/\/(\d+)$/)?.[1] ?? 0)
-      const fileName = file.fileName || file.heading || `${slug}.zip`
-      latestFile = {
-        fileId,
-        fileName,
-        version: fileName.replace(/\.zip$/i, ''),
-        uploadedAt: parseTextDate(file.uploadedAt),
-        fileSize: parseSizeToBytes(file.fileSizeText),
-        fileSizeText: file.fileSizeText || null,
-        supportedVersions: file.supportedVersions,
-        changelogHtml: file.changelogHtml,
-        downloadUrl: buildDirectDownloadUrl(fileId, fileName),
-      }
-    }
-
-    return {
-      identifier: buildIdentifier(slug),
-      slug,
-      projectUrl,
-      author: project.author || 'Unknown',
-      imageUrl: project.imageUrl,
-      descriptionHtml: project.descriptionHtml,
-      screenshots: Array.from(new Set(project.screenshots.map((src) => absoluteUrl(src)).filter(Boolean) as string[])),
-      links: {
-        ...this.extractProjectLinks(project.externalLinks),
-        files: absoluteUrl(project.filesHref) ?? undefined,
-      },
-      latestFile,
     }
   }
 

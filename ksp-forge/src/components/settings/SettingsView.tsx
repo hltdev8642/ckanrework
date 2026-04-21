@@ -57,6 +57,7 @@ export function SettingsView() {
     setSyncing(true)
     try {
       await syncMeta()
+      await api.curseforge.syncAll()
       const ts: number | null = await api.meta.getLastSync()
       setLastSync(ts)
     } finally {
@@ -158,8 +159,8 @@ export function SettingsView() {
             {/* Sync button + description */}
             <div className="flex items-center justify-between gap-4">
               <p className="text-xs text-[rgba(100,116,139,0.7)] leading-relaxed flex-1">
-                Sync the CKAN mod registry to get the latest mods and updates.
-                This downloads metadata for all available KSP mods.
+                Sync the CKAN and CurseForge registries to get the latest mods and updates.
+                This downloads metadata for all available KSP and CurseForge mods.
               </p>
               <div className="flex flex-col gap-2 flex-shrink-0">
                 <button
