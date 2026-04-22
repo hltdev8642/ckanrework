@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useUiStore, type AdvancedFilters } from '../../stores/ui-store'
+import { useUiStore, type AdvancedFilters, type CkanDiscoverFilter, type CurseForgeBrowseBy, type CurseForgeCategory } from '../../stores/ui-store'
 import { useModStore } from '../../stores/mod-store'
 
 /** Parse `author:Foo tag:Bar license:MIT installed:yes compat:1.12 rest of query`
@@ -24,11 +24,20 @@ function parseQueryTokens(raw: string): { filters: Partial<AdvancedFilters>; pla
   return { filters, plainQuery: plain.join(' ') }
 }
 
+const CKAN_TAG_OPTIONS = [
+  'agency', 'app', 'buildings', 'career', 'combat', 'comms', 'config', 'control', 'convenience',
+  'crewed', 'editor', 'first-person', 'flags', 'graphics', 'information', 'library', 'parts',
+  'physics', 'planet-pack', 'plugin', 'resources', 'science', 'sound', 'stock-inventory',
+  'suits', 'tech-tree', 'uncrewed', 'untagged',
+]
+
 export function SearchBar() {
   const {
     currentView, discoverSource, searchQuery, sortBy, setSearchQuery, setSortBy,
     resetFilters, advancedFilters,
     setAdvancedFilters, clearAdvancedFilters, setDiscoverSource,
+    ckanStateFilter, ckanTags, ckanCustomLabel, curseForgeBrowseBy, curseForgeCategory,
+    setCkanStateFilter, setCkanTags, setCkanCustomLabel, setCurseForgeBrowseBy, setCurseForgeCategory,
   } = useUiStore()
   const { searchMods, fetchMods } = useModStore()
 
@@ -89,7 +98,12 @@ export function SearchBar() {
     (advancedFilters.tag ? 1 : 0) +
     (advancedFilters.license ? 1 : 0) +
     (advancedFilters.installed ? 1 : 0) +
-    (advancedFilters.compat ? 1 : 0)
+    (advancedFilters.compat ? 1 : 0) +
+    (discoverSource === 'ckan' && ckanStateFilter !== 'all' ? 1 : 0) +
+    (discoverSource === 'ckan' && ckanTags.length > 0 ? ckanTags.length : 0) +
+    (discoverSource === 'ckan' && ckanCustomLabel ? 1 : 0) +
+    (discoverSource === 'curseforge' && curseForgeBrowseBy !== 'all' ? 1 : 0) +
+    (discoverSource === 'curseforge' && curseForgeCategory !== 'all' ? 1 : 0)
 
   return (
     <div className="border-b border-space-border bg-space-surface/50">
@@ -166,15 +180,122 @@ export function SearchBar() {
 
       {/* Filter panel */}
       {showFilters && (
-        <div className="px-4 pb-3 flex items-center gap-4 flex-wrap">
-          {activeFilterCount > 0 && (
-            <button
-              onClick={() => { resetFilters(); clearAdvancedFilters() }}
-              className="text-xs text-[#ef4444] hover:text-[#f87171] transition-colors cursor-pointer ml-auto"
-            >
-              Reset
-            </button>
-          )}
+        <div className="px-4 pb-3 flex flex-col gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {discoverSource === 'ckan' ? (
+              <>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-space-text">CKAN Filter</label>
+                  <select
+                    value={ckanStateFilter}
+                    onChange={(e) => setCkanStateFilter(e.target.value as any)}
+                    className="select-dark"
+                  >
+                    <option value="all">All</option>
+                    <option value="compatible">Compatible</option>
+                    <option value="installed">Installed</option>
+                    <option value="installedUpdateAvailable">Installed Update Available</option>
+                    <option value="newInRepository">New in Repository</option>
+                    <option value="notInstalled">Not Installed</option>
+                    <option value="incompatible">Incompatible</option>
+                    <option value="cached">Cached</option>
+                    <option value="replaceable">Replaceable</option>
+                    <option value="uncached">Uncached</option>
+                    <option value="customLabel">Custom Label</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-space-text">Tags</label>
+                  <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto border border-space-border rounded-lg p-2 bg-space-bg">
+                    {CKAN_TAG_OPTIONS.map((tag) => (
+                      <label key={tag} className="flex items-center gap-2 text-[13px] text-space-text">
+                        <input
+                          type="checkbox"
+                          checked={ckanTags.includes(tag)}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...ckanTags, tag]
+                              : ckanTags.filter((value) => value !== tag)
+                            setCkanTags(next)
+                          }}
+                          className="accent-[#6366f1]"
+                        />
+                        {tag}
+                      </label>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    value={ckanCustomLabel}
+                    onChange={(e) => setCkanCustomLabel(e.target.value)}
+                    placeholder="Custom label text"
+                    className="input-dark"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-space-text">Browse By</label>
+                  <select
+                    value={curseForgeBrowseBy}
+                    onChange={(e) => setCurseForgeBrowseBy(e.target.value as any)}
+                    className="select-dark"
+                  >
+                    <option value="all">All</option>
+                    <option value="missions">Missions</option>
+                    <option value="shareables">Shareables</option>
+                    <option value="mods">Mods</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-space-text">Category</label>
+                  <select
+                    value={curseForgeCategory}
+                    onChange={(e) => setCurseForgeCategory(e.target.value as any)}
+                    className="select-dark"
+                  >
+                    <option value="all">All Categories</option>
+                    <option value="Command and Control">Command and Control</option>
+                    <option value="Gameplay">Gameplay</option>
+                    <option value="Miscellaneous">Miscellaneous</option>
+                    <option value="Parts Pack">Parts Pack</option>
+                    <option value="Physics">Physics</option>
+                    <option value="Propulsion">Propulsion</option>
+                    <option value="Resources">Resources</option>
+                    <option value="Science">Science</option>
+                    <option value="Ship Systems">Ship Systems</option>
+                    <option value="Structural and Aerodynamic">Structural and Aerodynamic</option>
+                    <option value="Sub-Assembly">Sub-Assembly</option>
+                    <option value="Twitch Integration">Twitch Integration</option>
+                    <option value="Utility and Navigation">Utility and Navigation</option>
+                  </select>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="text-xs text-space-text-muted">
+              Use these source-specific filters to narrow the Discover results.
+            </div>
+            {activeFilterCount > 0 && (
+              <button
+                onClick={() => {
+                  resetFilters()
+                  clearAdvancedFilters()
+                  setCkanTags([])
+                  setCkanStateFilter('all')
+                  setCkanCustomLabel('')
+                  setCurseForgeBrowseBy('all')
+                  setCurseForgeCategory('all')
+                }}
+                className="text-xs text-[#ef4444] hover:text-[#f87171] transition-colors cursor-pointer"
+              >
+                Reset
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

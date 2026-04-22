@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0d0d1a?style=for-the-badge" alt="Platform" />
   <img src="https://img.shields.io/github/license/JLSkyzer/ckanrework?style=for-the-badge&color=a78bfa" alt="License" />
 </p>
-
+<p align="center"><strong>Release v0.5.8</strong> — Includes filter fixes and improved reset behavior.</p>
 <p align="center">
   <em>Tired of CKAN's outdated interface? KSP Forge combines the power of the CKAN mod registry with a CurseForge-quality UI, enriched with images and descriptions from SpaceDock and the KSP Forum.</em>
 </p>

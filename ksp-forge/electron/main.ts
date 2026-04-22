@@ -1,3 +1,4 @@
+import fs from 'fs'
 import { app, BrowserWindow, shell, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -13,7 +14,16 @@ import { ModCacheService } from './services/mod-cache'
 import { CurseForgeService } from './services/curseforge'
 import { registerIpcHandlers } from './ipc-handlers'
 
-const logger = initLogger(join(app.getPath('userData'), 'logs'))
+const userData = app.getPath('userData')
+const cacheDir = join(userData, 'cache')
+try {
+  fs.mkdirSync(cacheDir, { recursive: true })
+} catch { /* ignore */ }
+app.commandLine.appendSwitch('disk-cache-dir', cacheDir)
+app.commandLine.appendSwitch('disable-gpu')
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
+
+const logger = initLogger(join(userData, 'logs'))
 logger.interceptConsole()
 
 logger.info('KSP Forge starting')

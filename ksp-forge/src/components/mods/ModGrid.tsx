@@ -2,7 +2,7 @@ import { useEffect, useRef, useMemo, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useModStore } from '../../stores/mod-store'
 import { useProfileStore } from '../../stores/profile-store'
-import { useUiStore } from '../../stores/ui-store'
+import { useUiStore, type CkanDiscoverFilter, type CurseForgeBrowseBy, type CurseForgeCategory } from '../../stores/ui-store'
 import { SearchBar } from '../layout/SearchBar'
 import { ModCard } from './ModCard'
 import { InstallDialog } from '../install/InstallDialog'
@@ -41,10 +41,93 @@ function getModKspVersion(mod: { ksp_version: string | null; ksp_version_min: st
   return mod.ksp_version || mod.ksp_version_min || mod.ksp_version_max || ''
 }
 
+function parseJsonTags(tags: string | null): string[] {
+  if (!tags) return []
+  try {
+    const parsed = JSON.parse(tags)
+    if (Array.isArray(parsed)) return parsed.map((t) => String(t).toLowerCase())
+  } catch { }
+  return tags.split(/[,;|]/).map((t) => t.trim().toLowerCase()).filter(Boolean)
+}
+
+function modHasTag(mod: ModRow, tag: string): boolean {
+  return parseJsonTags(mod.tags).some((t) => t.includes(tag.toLowerCase()))
+}
+
+function matchesCkanTags(mod: ModRow, tags: string[]): boolean {
+  if (!tags.length) return true
+  const parsed = parseJsonTags(mod.tags)
+  return tags.every((tag) => {
+    if (tag === 'untagged') return parsed.length === 0
+    return parsed.some((t) => t.includes(tag.toLowerCase()))
+  })
+}
+
+function matchesCurseForgeBrowseBy(mod: ModRow, browseBy: CurseForgeBrowseBy): boolean {
+  if (browseBy === 'all') return true
+  const tags = parseJsonTags(mod.tags)
+  if (browseBy === 'missions') return tags.some((t) => /mission|missions|mission pack|mission-builder/.test(t))
+  if (browseBy === 'shareables') return tags.some((t) => /share|craft|blueprint|challenge|contract|community/.test(t))
+  if (browseBy === 'mods') return true
+  return true
+}
+
+function matchesCurseForgeCategory(mod: ModRow, category: CurseForgeCategory): boolean {
+  if (category === 'all') return true
+  return parseJsonTags(mod.tags).some((t) => t.includes(category.toLowerCase()))
+}
+
+function matchesCkanStateFilter(mod: ModRow, filter: CkanDiscoverFilter, installedSet: Set<string>, updatesAvailableSet: Set<string>, activeProfileVersion: string | null, spacedockCache: Map<string, any>, customLabel: string): boolean {
+  const isInstalled = installedSet.has(mod.identifier)
+  const tags = parseJsonTags(mod.tags)
+  const isCached = spacedockCache.has(mod.identifier)
+  const hasReplaceableTag = tags.some((t) => /replace|deprecated|replacement|legacy/.test(t)) || (mod.abstract || '').toLowerCase().includes('replace')
+
+  const releaseDate = mod.release_date ? new Date(mod.release_date) : null
+  const now = new Date()
+  const isNew = releaseDate ? (now.getTime() - releaseDate.getTime()) <= 1000 * 60 * 60 * 24 * 30 : false
+
+  const version = activeProfileVersion || ''
+  const compatible = (() => {
+    if (!version || version === 'unknown') return true
+    if (mod.ksp_version && !version.startsWith(mod.ksp_version.split('.').slice(0, 2).join('.'))) return false
+    if (mod.ksp_version_min && compareVersions(version, mod.ksp_version_min) < 0) return false
+    if (mod.ksp_version_max && compareVersions(version, mod.ksp_version_max) > 0) return false
+    return true
+  })()
+
+  switch (filter) {
+    case 'all':
+      return true
+    case 'compatible':
+      return compatible
+    case 'installed':
+      return isInstalled
+    case 'installedUpdateAvailable':
+      return isInstalled && updatesAvailableSet.has(mod.identifier)
+    case 'newInRepository':
+      return !isInstalled && isNew
+    case 'notInstalled':
+      return !isInstalled
+    case 'incompatible':
+      return !compatible
+    case 'cached':
+      return isCached
+    case 'replaceable':
+      return hasReplaceableTag
+    case 'uncached':
+      return !isCached
+    case 'customLabel':
+      return customLabel ? tags.some((t) => t.includes(customLabel.toLowerCase())) : true
+    default:
+      return true
+  }
+}
+
 export function ModGrid({ filter = 'all' }: ModGridProps) {
   const { mods, loading, fetchSpaceDockBatch, spacedockCache } = useModStore()
   const { installedMods, activeProfileId, fetchInstalledMods, uninstallMod } = useProfileStore()
-  const { currentView, discoverSource, discoverScrollPosition, setDiscoverScrollPosition, openModDetail, sortBy, advancedFilters, searchQuery } = useUiStore()
+  const { currentView, discoverSource, discoverScrollPosition, setDiscoverScrollPosition, openModDetail, sortBy, advancedFilters, searchQuery, ckanStateFilter, ckanTags, ckanCustomLabel, curseForgeBrowseBy, curseForgeCategory } = useUiStore()
   const { getActiveProfile } = useProfileStore()
   const { resolution, showDialog, confirmInstall, cancelInstall, requestInstall, requestCurseForgeInstall } = useInstallStore()
   const parentRef = useRef<HTMLDivElement>(null)
@@ -137,8 +220,15 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
     if (advancedFilters.tag) {
       const t = advancedFilters.tag.toLowerCase()
       result = result.filter(m => {
-        if (!m.tags) return false
-        try { return (JSON.parse(m.tags) as string[]).some(tag => tag.toLowerCase().includes(t)) } catch { return false }
+        if (t === 'untagged') {
+          const parsed = parseJsonTags(m.tags)
+          return parsed.length === 0
+        }
+        try {
+          return parseJsonTags(m.tags).some(tag => tag.includes(t))
+        } catch {
+          return false
+        }
       })
     }
     if (advancedFilters.license) {
@@ -161,6 +251,15 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
       })
     }
 
+    if (discoverSource === 'ckan') {
+      result = result.filter((m) => matchesCkanStateFilter(m, ckanStateFilter, installedSet, updatesAvailableSet, activeProfile?.ksp_version ?? null, spacedockCache, ckanCustomLabel))
+      result = result.filter((m) => matchesCkanTags(m, ckanTags))
+    }
+
+    if (discoverSource === 'curseforge') {
+      result = result.filter((m) => matchesCurseForgeBrowseBy(m, curseForgeBrowseBy) && matchesCurseForgeCategory(m, curseForgeCategory))
+    }
+
     // Sort
     if (sortBy === 'name') {
       result = [...result].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
@@ -170,7 +269,21 @@ export function ModGrid({ filter = 'all' }: ModGridProps) {
     // 'downloads' = default DB order (no sort needed)
 
     return result
-  }, [mods, isInstalledView, installedSet, sortBy, advancedFilters, searchQuery])
+  }, [
+    mods,
+    isInstalledView,
+    installedSet,
+    sortBy,
+    advancedFilters,
+    searchQuery,
+    ckanStateFilter,
+    ckanTags,
+    ckanCustomLabel,
+    curseForgeBrowseBy,
+    curseForgeCategory,
+    spacedockCache,
+    activeProfile?.ksp_version,
+  ])
 
   const containerWidth = parentRef.current?.clientWidth ?? 900
   const columns = Math.max(1, Math.floor((containerWidth + GAP) / (240 + GAP)))
